@@ -1,0 +1,15 @@
+# Install ApplyPilot fork first (editable):
+#   pip install -e ./applypilot-src
+-e ./applypilot-src
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+bcrypt>=4.0.1
+python-jose[cryptography]>=3.3.0
+email-validator>=2.0.0
+python-telegram-bot>=21.0
+slowapi>=0.1.9
+PyPDF2>=3.0.0
+python-jobspy>=1.1
+psycopg2-binary>=2.9.9

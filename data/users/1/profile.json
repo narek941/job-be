@@ -1,0 +1,117 @@
+{
+  "personal": {
+    "full_name": "",
+    "preferred_name": "Narek",
+    "role_title": "",
+    "email": "",
+    "phone": "",
+    "address": "",
+    "city": "Yerevan",
+    "province_state": "",
+    "country": "Armenia",
+    "postal_code": "",
+    "linkedin_url": "",
+    "github_url": "",
+    "portfolio_url": "https://narek-qolyan-cv.vercel.app/",
+    "website_url": "https://narek-qolyan-cv.vercel.app/",
+    "bio": "",
+    "skills": "",
+    "work_experience_text": "",
+    "education_text": "",
+    "links_text": "",
+    "languages": ""
+  },
+  "work_authorization": {
+    "legally_authorized_to_work": "Yes",
+    "require_sponsorship": "No",
+    "work_permit_type": ""
+  },
+  "availability": {
+    "earliest_start_date": "Immediately",
+    "available_for_full_time": "Yes",
+    "available_for_contract": "Yes"
+  },
+  "compensation": {
+    "salary_expectation": "",
+    "salary_currency": "USD",
+    "salary_range_min": "",
+    "salary_range_max": "",
+    "currency_conversion_note": ""
+  },
+  "experience": {
+    "years_of_experience_total": "6",
+    "education_level": "Bachelor's Degree",
+    "current_job_title": "Senior Frontend Engineer",
+    "current_company": "ShellLogix",
+    "target_role": "Senior Frontend Engineer"
+  },
+  "skills_boundary": {
+    "languages": [
+      "TypeScript",
+      "JavaScript",
+      "Node.js"
+    ],
+    "frameworks": [
+      "React",
+      "React Native",
+      "Next.js",
+      "Expo",
+      "Redux",
+      "Zustand",
+      "React Query",
+      "Express.js",
+      "Vite",
+      "GraphQL"
+    ],
+    "devops": [
+      "Git",
+      "GitHub Actions",
+      "Docker",
+      "CI/CD",
+      "Playwright"
+    ],
+    "databases": [],
+    "tools": [
+      "Figma",
+      "Jira",
+      "Postman",
+      "Sentry",
+      "Storybook"
+    ]
+  },
+  "resume_facts": {
+    "preserved_companies": [
+      "ShellLogix",
+      "Opta Sports",
+      "Stats Perform"
+    ],
+    "preserved_projects": [
+      "Accounting Company Website",
+      "Cryptocurrency Admin Panel",
+      "Mobile E-commerce Solution",
+      "RV Rental Platform",
+      "AI Social Media Post Generator",
+      "Git Identity Management CLI",
+      "Service Admin Panel",
+      "Mobile WebView Application",
+      "Smart Device & Health Mobile App"
+    ],
+    "preserved_school": "Armenian National Agrarian University",
+    "real_metrics": [
+      "6+ years of experience",
+      "100+ brands (Mobile E-commerce)",
+      "100% data accuracy (Opta Sports)",
+      "50+ unit tests (git-identity CLI)"
+    ]
+  },
+  "eeo_voluntary": {
+    "gender": "Decline to self-identify",
+    "race_ethnicity": "Decline to self-identify",
+    "veteran_status": "I am not a protected veteran",
+    "disability_status": "I do not wish to answer"
+  },
+  "armapply": {
+    "resume_language": "bilingual",
+    "cover_letter_language": "bilingual"
+  }
+}

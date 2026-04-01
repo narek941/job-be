@@ -1,0 +1,83 @@
+{
+  "personal": {
+    "full_name": "Narek Kolyan",
+    "preferred_name": "Narek",
+    "role_title": "Senior Frontend Engineer",
+    "email": "nqolyan@gmail.com",
+    "phone": "+37455818286",
+    "address": "",
+    "city": "Yerevan",
+    "province_state": "",
+    "country": "Armenia",
+    "postal_code": "",
+    "linkedin_url": "https://linkedin.com/in/narek-qolyan-4a92b611b",
+    "github_url": "https://github.com/narek941",
+    "portfolio_url": "https://narek-qolyan-cv.vercel.app/",
+    "website_url": "https://narek-qolyan-cv.vercel.app/",
+    "bio": "Senior Frontend Engineer with 6+ years of experience building scalable web and mobile applications on React and TypeScript. Specialization: headless e-commerce, GraphQL data layers, performance optimization, modular UI systems, and React Native. Open to remote offers.",
+    "skills": "React, React Native, TypeScript, Redux, Zustand, React Query, Context API, Expo, Next.js, Vite, React Hook Form, SCSS/SASS, Tailwind CSS, Node.js, Express.js, REST APIs, GraphQL, Shopify/Hydrogen, Git, GitHub Actions, Jira, Figma, Postman, Sentry, Docker, Playwright, Jest, BLE, HealthKit, Health Connect, Google Fit, OTA Firmware Updates, Push Notifications, WebView, Commander.js",
+    "work_experience_text": "Senior Frontend Engineer @ ShellLogix (Oct 2021 – Present, Yerevan):\n- Developed complex React and React Native applications: analytics platforms, e-commerce, corporate dashboards\n- Designed modular frontend architecture and GraphQL data layers for maintainability\n- Built headless Shopify storefronts (Hydrogen), custom checkout flows, cross-platform mobile apps\n- Collaborated with international US/EU teams on scalable solutions\n\nData Researcher / Editor @ Opta Sports by Stats Perform (Nov 2016 – Mar 2025, Yerevan/Remote):\n- Managed and validated large-scale sports datasets with 100% accuracy under strict deadlines\n- Coordinated with global teams for real-time statistics delivery to broadcast and media partners\n- Applied sports data expertise to build accurate filter UIs and stats dashboards",
+    "education_text": "Bachelor's Degree in Agriculture Marketing & Business\nArmenian National Agrarian University (Sep 2018 – Jun 2022, Yerevan, Armenia)\nCourses: Economics, Statistics, Project Management",
+    "links_text": "Portfolio: https://narek-qolyan-cv.vercel.app/ | GitHub: https://github.com/narek941 | LinkedIn: https://linkedin.com/in/narek-qolyan-4a92b611b | npm: https://www.npmjs.com/package/git-identity",
+    "languages": "Armenian: Native, Russian: C1 (Advanced), English: B2 (Upper-Intermediate / Professional Working)"
+  },
+  "work_authorization": {
+    "legally_authorized_to_work": "Yes",
+    "require_sponsorship": "No",
+    "work_permit_type": ""
+  },
+  "availability": {
+    "earliest_start_date": "Immediately",
+    "available_for_full_time": "Yes",
+    "available_for_contract": "Yes"
+  },
+  "compensation": {
+    "salary_expectation": "",
+    "salary_currency": "USD",
+    "salary_range_min": "",
+    "salary_range_max": "",
+    "currency_conversion_note": "Open to negotiation based on role"
+  },
+  "experience": {
+    "years_of_experience_total": "6",
+    "education_level": "Bachelor's Degree",
+    "current_job_title": "Senior Frontend Engineer",
+    "current_company": "ShellLogix",
+    "target_role": "Senior Frontend Engineer"
+  },
+  "skills_boundary": {
+    "languages": ["TypeScript", "JavaScript", "Node.js"],
+    "frameworks": ["React", "React Native", "Next.js", "Expo", "Redux", "Zustand", "React Query", "GraphQL", "Express.js", "Vite"],
+    "devops": ["Git", "GitHub Actions", "Docker", "CI/CD", "Playwright", "Jest"],
+    "databases": [],
+    "tools": ["Figma", "Jira", "Postman", "Sentry", "Shopify/Hydrogen"]
+  },
+  "resume_facts": {
+    "preserved_companies": ["ShellLogix", "Opta Sports", "Stats Perform"],
+    "preserved_projects": [
+      "Accounting Company Website (Next.js, Canvas, multilingual)",
+      "Cryptocurrency Admin Panel (React, WebSocket, Chart.js)",
+      "Mobile E-commerce Solution (React Native, Shopify, 100+ brands)",
+      "RV Rental Platform (Shopify Hydrogen, GraphQL, custom checkout)",
+      "AI Social Media Post Generator (React, AI integration, video pipeline)",
+      "Git Identity Management CLI (TypeScript, Node.js, npm package, 50+ tests)",
+      "Service Admin Panel (React 19, Vite, Ant Design, Zustand, HubSpot)",
+      "Mobile WebView Application (React Native, per-app VPN)",
+      "Smart Device & Health Mobile App (React Native, BLE, HealthKit, OTA)"
+    ],
+    "preserved_school": "Armenian National Agrarian University",
+    "real_metrics": [
+      "6+ years experience",
+      "100+ brands (Mobile E-commerce Solution)",
+      "100% data accuracy (Opta Sports)",
+      "50+ unit tests (git-identity CLI)",
+      "Team of 40+ (Mobile E-commerce)"
+    ]
+  },
+  "eeo_voluntary": {
+    "gender": "Decline to self-identify",
+    "race_ethnicity": "Decline to self-identify",
+    "veteran_status": "I am not a protected veteran",
+    "disability_status": "I do not wish to answer"
+  }
+}

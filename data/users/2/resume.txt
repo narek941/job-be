@@ -1,0 +1,1 @@
+Paste your resume here (plain text). Upload via API replaces this file.
