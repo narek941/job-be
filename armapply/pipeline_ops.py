@@ -17,7 +17,9 @@ log = logging.getLogger(__name__)
 
 
 def discover_and_enrich(user_id: int, workers: int = 1) -> dict:
-    from armapply.users_db import upsert_jobs_batch
+    from armapply.users_db import upsert_jobs_batch, get_user_preferences
+    from armapply.telegram_notify import send_telegram_message
+    
     d = _run_discover(workers=workers)
     e = _run_enrich(workers=workers)
     
@@ -27,6 +29,13 @@ def discover_and_enrich(user_id: int, workers: int = 1) -> dict:
     jobs_list = [dict(r) for r in rows]
     new_c, up_c = upsert_jobs_batch(user_id, jobs_list, "Discovery", "sync")
     
+    # Notify if new jobs found
+    if new_c > 0:
+        prefs = get_user_preferences(user_id)
+        chat_id = prefs.get("telegram_chat_id")
+        if chat_id:
+            send_telegram_message(str(chat_id), f"🔍 ArmApply Discovery: Found {new_c} new jobs for you!")
+            
     return {"discover": d, "enrich": e, "supabase_sync": {"new": new_c, "updated": up_c}}
 
 

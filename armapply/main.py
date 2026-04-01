@@ -71,10 +71,44 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def _startup() -> None:
+async def _startup() -> None:
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     init_app_db()
     maybe_seed_test_user()
+    
+    # Start background scheduler
+    import asyncio
+    asyncio.create_task(background_pipeline_scheduler())
+
+async def background_pipeline_scheduler():
+    """Simple background loop to run discovery for all users periodically."""
+    import asyncio
+    await asyncio.sleep(10) # Wait for startup
+    while True:
+        log.info("Starting background pipeline sweep...")
+        from armapply.users_db import list_all_user_ids
+        try:
+            uids = list_all_user_ids()
+            for uid in uids:
+                log.info(f"Background proc for user {uid}")
+                try:
+                    # 1. Discover & Enrich
+                    def _disc():
+                        return discover_and_enrich(uid, workers=1)
+                    await run_in_pipeline(uid, _disc)
+                    
+                    # 2. Score
+                    def _score():
+                        return score_jobs_batch(uid, limit=20)
+                    await run_in_pipeline(uid, _score)
+                except Exception as e:
+                    log.error(f"Background task failed for user {uid}: {e}")
+            
+            # Wait 4 hours between sweeps
+            await asyncio.sleep(4 * 3600)
+        except Exception as global_e:
+            log.error(f"Global scheduler error: {global_e}")
+            await asyncio.sleep(600)
 
 
 # --- Auth ---
@@ -406,12 +440,16 @@ async def auto_fill_profile(user: User) -> dict[str, Any]:
     if data_path.exists():
         current_data = json.loads(data_path.read_text(encoding="utf-8"))
     
-    # Merge extracted data into personal section
-    if "personal" in profile_data:
-        if "personal" not in current_data:
-            current_data["personal"] = {}
-        current_data["personal"].update(profile_data["personal"])
+    # Merge extracted data into personal section (handle both nested and flat results)
+    llm_p = profile_data.get("personal", profile_data)
+    
+    if "personal" not in current_data:
+        current_data["personal"] = {}
         
+    for k, v in llm_p.items():
+        if v: # Only update if we got a value
+            current_data["personal"][k] = v
+            
     data_path.write_text(json.dumps(current_data, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"status": "ok", "profile": current_data}
 

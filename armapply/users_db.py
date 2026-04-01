@@ -208,6 +208,12 @@ def update_user_preferences(user_id: int, prefs: dict) -> None:
     )
 
 
+def list_all_user_ids() -> list[int]:
+    init_app_db()
+    rows = _exec("SELECT id FROM users", fetch="all")
+    return [int(r["id"]) for r in rows] if rows else []
+
+
 def get_user_preferences(user_id: int) -> dict:
     u = get_user_by_id(user_id)
     if not u:
