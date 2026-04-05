@@ -194,17 +194,17 @@ def save_uploaded_resume_pdf(user_root: Path, data: bytes) -> None:
     txt_path = user_root / "resume.txt"
     pdf_path.write_bytes(data)
     try:
-        from PyPDF2 import PdfReader
+        import pdfplumber
 
-        reader = PdfReader(str(pdf_path))
         parts: list[str] = []
-        for page in reader.pages:
-            t = page.extract_text()
-            if t:
-                parts.append(t)
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    parts.append(t)
         txt_path.write_text("\n\n".join(parts), encoding="utf-8")
-    except Exception:
-        txt_path.write_text("[PDF uploaded — text extraction failed; replace resume.txt manually]\n", encoding="utf-8")
+    except Exception as e:
+        txt_path.write_text(f"[PDF uploaded — text extraction failed; replace resume.txt manually]\nError: {e}\n", encoding="utf-8")
 
 
 def save_uploaded_resume_text(user_root: Path, text: str) -> None:

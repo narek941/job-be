@@ -93,14 +93,36 @@ async def background_pipeline_scheduler():
                 log.info(f"Background proc for user {uid}")
                 try:
                     # 1. Discover & Enrich
-                    def _disc():
-                        return discover_and_enrich(uid, workers=1)
+                    def _disc(): return discover_and_enrich(uid, workers=1)
                     await run_in_pipeline(uid, _disc)
                     
                     # 2. Score
-                    def _score():
-                        return score_jobs_batch(uid, limit=20)
+                    def _score(): return score_jobs_batch(uid, limit=20)
                     await run_in_pipeline(uid, _score)
+
+                    # 3. Auto-Apply or Draft flow
+                    prefs = get_user_preferences(uid)
+                    autopilot_on = prefs.get("auto_pilot", False)
+                    chat_id = prefs.get("telegram_chat_id")
+                    
+                    def _process_queue():
+                        from armapply.approval_pipeline import run_approval_pipeline
+                        recipient = prefs.get("application_email", "")
+                        if not chat_id:
+                            log.info("User %d has no telegram_chat_id; skipping approval step.", uid)
+                            return {"skipped": True, "reason": "no_telegram"}
+                        if not recipient:
+                            log.info("User %d has no application_email; skipping Gmail step.", uid)
+                        return run_approval_pipeline(
+                            user_id=uid,
+                            chat_id=str(chat_id),
+                            recipient_email=recipient,
+                            min_score=7,
+                            max_jobs=3,
+                        )
+
+                    await run_in_pipeline(uid, _process_queue)
+                    
                 except Exception as e:
                     log.error(f"Background task failed for user {uid}: {e}")
             
@@ -426,32 +448,36 @@ async def upload_resume_pdf(user: User, file: UploadFile = File(...)) -> dict[st
 @app.post("/profile/auto-fill-from-resume")
 async def auto_fill_profile(user: User) -> dict[str, Any]:
     uid = user["id"]
-    root = ensure_user_workspace(uid)
-    resume_path = root / "resume.txt"
-    if not resume_path.exists():
-        raise HTTPException(status_code=404, detail="No resume text found. Please upload a PDF first.")
     
-    text = resume_path.read_text(encoding="utf-8")
-    profile_data = extract_profile_from_resume(text)
-    
-    # Save the extracted profile
-    data_path = root / "profile.json"
-    current_data = {}
-    if data_path.exists():
-        current_data = json.loads(data_path.read_text(encoding="utf-8"))
-    
-    # Merge extracted data into personal section (handle both nested and flat results)
-    llm_p = profile_data.get("personal", profile_data)
-    
-    if "personal" not in current_data:
-        current_data["personal"] = {}
+    def _go():
+        root = ensure_user_workspace(uid)
+        resume_path = root / "resume.txt"
+        if not resume_path.exists():
+            raise HTTPException(status_code=404, detail="No resume text found. Please upload a PDF first.")
         
-    for k, v in llm_p.items():
-        if v: # Only update if we got a value
-            current_data["personal"][k] = v
+        text = resume_path.read_text(encoding="utf-8")
+        profile_data = extract_profile_from_resume(text)
+        
+        # Save the extracted profile
+        data_path = root / "profile.json"
+        current_data = {}
+        if data_path.exists():
+            current_data = json.loads(data_path.read_text(encoding="utf-8"))
+        
+        # Merge extracted data into personal section (handle both nested and flat results)
+        llm_p = profile_data.get("personal", profile_data)
+        
+        if "personal" not in current_data:
+            current_data["personal"] = {}
             
-    data_path.write_text(json.dumps(current_data, indent=2, ensure_ascii=False), encoding="utf-8")
-    return {"status": "ok", "profile": current_data}
+        for k, v in llm_p.items():
+            if v: # Only update if we got a value
+                current_data["personal"][k] = v
+                
+        data_path.write_text(json.dumps(current_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"status": "ok", "profile": current_data}
+        
+    return await run_in_pipeline(uid, _go)
 
 
 @app.get("/settings/preferences")
@@ -623,4 +649,88 @@ async def calendar_export_ics(user: User) -> Response:
 def health() -> dict[str, str]:
     return {"status": "ok", "app": "armapply"}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Approval Pipeline: Telegram webhook + manual trigger
+# ─────────────────────────────────────────────────────────────────────────────
+
+from armapply.approval_pipeline import (
+    handle_telegram_callback,
+    run_approval_pipeline,
+    _PENDING,
+)
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request) -> dict[str, str]:
+    """
+    Register this URL with Telegram:
+      curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+           -d "url=https://YOUR_DOMAIN/telegram/webhook"
+    """
+    update = await request.json()
+    try:
+        handle_telegram_callback(update)
+    except Exception as e:
+        log.error("Telegram webhook error: %s", e)
+    return {"ok": "true"}
+
+
+class ApprovalPipelineBody(BaseModel):
+    min_score: int = 7
+    max_jobs: int = 3
+    recipient_email: str = Field(..., description="Email address to send the application to")
+
+
+@app.post("/pipeline/run-approval")
+@limiter.limit("10/hour")
+async def trigger_approval_pipeline(
+    request: Request,
+    user: User,
+    body: ApprovalPipelineBody,
+) -> dict[str, Any]:
+    """
+    Manually trigger the approval pipeline for the authenticated user.
+    Picks best-matching jobs, tailors CV + cover letter for each, and
+    sends a Telegram message with Approve / Skip buttons.
+    After user approves, the application is sent via Gmail to `recipient_email`.
+    """
+    uid = user["id"]
+    prefs = get_user_preferences(uid)
+    chat_id = prefs.get("telegram_chat_id", "")
+
+    if not chat_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No Telegram chat_id set. Go to Settings → Telegram Bot and save your Chat ID first."
+        )
+
+    def _go():
+        return run_approval_pipeline(
+            user_id=uid,
+            chat_id=str(chat_id),
+            recipient_email=body.recipient_email,
+            min_score=body.min_score,
+            max_jobs=body.max_jobs,
+        )
+
+    result = await run_in_pipeline(uid, _go)
+    log_pipeline_run(uid, "approval-pipeline", "ok", json.dumps(result, default=str)[:2000])
+    return {"status": "ok", "result": result}
+
+
+@app.get("/pipeline/pending-approvals")
+async def get_pending_approvals(user: User) -> list[dict[str, Any]]:
+    """Returns a list of jobs currently awaiting Telegram approval."""
+    uid = user["id"]
+    return [
+        {
+            "key":        k,
+            "job_title":  v["job_title"],
+            "job_url":    v["job_url"],
+            "created_at": v["created_at"],
+        }
+        for k, v in _PENDING.items()
+        if v["user_id"] == uid
+    ]
 

@@ -88,47 +88,104 @@ Rules:
 
 
 def generate_tailored_cover_letter(job: dict, language: str = "en") -> str:
-    """Generates a cover letter focused on TECHNICAL SKILLS alignment."""
-    profile = load_profile()
-    personal = profile.get("personal") or {}
-    name = personal.get("full_name", "Candidate")
-    role = personal.get("role_title", "Engineer")
-    skills = personal.get("skills", "")
-    experience = personal.get("work_experience_text", "")
+    """Generates a warm, human-sounding cover letter based on Narek's real CV."""
+    from armapply.cv_template import (
+        NAME, EMAIL, PHONE, SUMMARY, SKILLS, EXPERIENCE, PROJECTS
+    )
     
-    jd = (job.get("full_description") or job.get("description") or "")[:5000]
-    title = job.get("title") or ""
-    company = job.get("site") or "the company"
+    jd    = (job.get("full_description") or job.get("description") or "")[:5000]
+    title = job.get("title") or "this role"
+    company = job.get("site") or "your company"
 
-    lang_note = "Russian" if language.startswith("ru") else "English"
-    prompt = f"""You are a top-tier technical candidate. Write a highly technical, concise cover letter for the '{title}' role at '{company}'.
-    Language: {lang_note}
-    
-    FOCUS: 
-    - Lead with your technical stack and seniority.
-    - Highlight specific technical achievements from your experience that map directly to the job's technical requirements.
-    - Discuss architecture, scalability, or specific tools (e.g. React, Node, AWS) rather than soft skills.
-    - Keep it under 250 words. No "fluff" or generic praise of the company.
-    
-    Candidate Identity: {name}, {role}
-    Candidate Skills: {skills}
-    Candidate Experience: {experience}
-    
-    Job Description:
-    {jd}
-    
-    Structure:
-    1. Hook: 1 sentence on why your specific technical background is a 10/10 fit.
-    2. Body: 2 paragraphs detailing technical problems you solved that are relevant to this JD.
-    3. Closing: Technical call to action (ready to discuss architecture/details).
-    """
+    # Build experience bullet summary for the prompt
+    exp_text = "\n".join(
+        f"- {e['role']} at {e['company']} ({e['period']}): " + "; ".join(e["bullets"][:3])
+        for e in EXPERIENCE
+    )
+    project_text = "\n".join(
+        f"- {p[0]}: {p[1]}.  {p[2]}"
+        for p in PROJECTS[:4]
+    )
+    skills_flat = ", ".join(
+        s for items in SKILLS.values() for s in items[:3]
+    )
+
+    lang_note = "Write in Armenian (Eastern Armenian, professional tone)." if language.startswith("hy") else "Write in English."
+
+    prompt = f"""You are writing a cover letter AS Narek Kolyan (first person, "I").
+{lang_note}
+
+TONE RULES — extremely important:
+- Sound like a real human being, NOT a corporate robot.
+- No clichés: avoid "I am excited to apply", "I hope this email finds you well", 
+  "I am passionate about growing", "synergize", "leverage", "cutting-edge".
+- Be direct, warm, slightly conversational. 180–220 words max.
+- Reference a specific thing from the job description to show you actually read it.
+- FIRST sentence must hook immediately — who you are + one concrete achievement.
+
+CANDIDATE PROFILE:
+  Name: {NAME}
+  Phone: {PHONE}  Email: {EMAIL}
+  Summary: {SUMMARY}
+  Core skills: {skills_flat}
+
+EXPERIENCE:
+{exp_text}
+
+SELECTED PROJECTS:
+{project_text}
+
+ROLE APPLYING TO: {title} at {company}
+
+JOB DESCRIPTION (excerpt):
+{jd}
+
+STRUCTURE (follow exactly):
+1. Opening (1 sentence) — who Narek is + one concrete number/achievement that is relevant to this JD.
+2. Body paragraph 1 — most relevant past project or role (be specific: tech stack, scale, outcome).
+3. Body paragraph 2 — what appeals to him about this specific role/company (reference something real from the JD).
+4. Closing (2 sentences) — express readiness to talk, no fluff.
+
+Output ONLY the letter body (no subject line, no signature block)."""
 
     client = get_client()
     return client.chat(
         [{"role": "user", "content": prompt}],
-        max_tokens=2048,
-        temperature=0.4,
+        max_tokens=1024,
+        temperature=0.6,
     )
+
+def generate_tailored_resume_text(job: dict) -> str:
+    """
+    Returns a plain-text CV version tailored to the job —
+    keeps Narek's full structure, highlights relevant skills at the top.
+    """
+    from armapply.cv_template import render_cv_text, SKILLS
+
+    jd    = (job.get("full_description") or "")[:4000]
+    title = job.get("title") or ""
+
+    # Ask LLM which skills to highlight
+    all_skills = [s for items in SKILLS.values() for s in items]
+    client = get_client()
+    highlight_prompt = f"""Given this job description excerpt, list 5–8 skills from the candidate's profile that are most relevant.
+Return ONLY a comma-separated list, no explanation.
+
+Job title: {title}
+Job description: {jd[:2000]}
+Candidate skills: {', '.join(all_skills)}"""
+
+    try:
+        highlighted = client.chat(
+            [{"role": "user", "content": highlight_prompt}],
+            max_tokens=80, temperature=0.3,
+        ).strip().split(",")
+        highlighted = [s.strip() for s in highlighted if s.strip()]
+    except Exception:
+        highlighted = []
+
+    return render_cv_text(job_title=title, extra_skills=highlighted)
+
 def extract_profile_from_resume(resume_text: str) -> dict:
     """Uses LLM to extract structured data from a raw resume text."""
     prompt = f"""
@@ -162,12 +219,19 @@ def extract_profile_from_resume(resume_text: str) -> dict:
     {resume_text[:10000]}
     """
     
+    import logging
+    log = logging.getLogger(__name__)
+    
     client = get_client()
-    response = client.chat(
-        [{"role": "user", "content": prompt}],
-        max_tokens=2048,
-        temperature=0.3,
-    )
+    try:
+        response = client.chat(
+            [{"role": "user", "content": prompt}],
+            max_tokens=2048,
+            temperature=0.3,
+        )
+    except Exception as e:
+        log.error(f"LLM API call failed in extract_profile_from_resume: {e}")
+        return {"personal": {}}
     
     try:
         import json
@@ -177,5 +241,6 @@ def extract_profile_from_resume(resume_text: str) -> dict:
         if match:
             return json.loads(match.group(0))
         return json.loads(response)
-    except Exception:
+    except Exception as e:
+        log.error(f"JSON parsing failed in extract_profile_from_resume: {e}. Output was: {response[:200]}")
         return {"personal": {}}

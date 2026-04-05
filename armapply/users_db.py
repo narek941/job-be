@@ -147,9 +147,11 @@ def init_app_db() -> None:
             score_reasoning       TEXT,
             scored_at             TEXT,
             tailored_resume_path  TEXT,
+            tailored_resume_text  TEXT,
             tailored_at           TEXT,
             tailor_attempts       INTEGER DEFAULT 0,
             cover_letter_path     TEXT,
+            cover_letter_text     TEXT,
             cover_letter_at       TEXT,
             cover_attempts        INTEGER DEFAULT 0,
             applied_at            TEXT,
@@ -164,6 +166,15 @@ def init_app_db() -> None:
             PRIMARY KEY (user_id, url)
         );
     """)
+    # Add columns if they don't exist yet (safe migration)
+    for col, typedef in [
+        ("tailored_resume_text", "TEXT"),
+        ("cover_letter_text",    "TEXT"),
+    ]:
+        try:
+            _exec(f"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS {col} {typedef}")
+        except Exception:
+            pass
     conn.commit()
 
 
@@ -359,11 +370,53 @@ def update_job_field(user_id: int, url: str, field: str, value: Any) -> None:
 
 def get_jobs_stats_supabase(user_id: int) -> dict:
     init_app_db()
-    total = _exec("SELECT COUNT(*) FROM jobs WHERE user_id = %s", (user_id,), fetch="one")["count"]
-    applied = _exec("SELECT COUNT(*) FROM jobs WHERE user_id = %s AND applied_at IS NOT NULL", (user_id,), fetch="one")["count"]
+    total    = _exec("SELECT COUNT(*) FROM jobs WHERE user_id = %s", (user_id,), fetch="one")["count"]
+    applied  = _exec("SELECT COUNT(*) FROM jobs WHERE user_id = %s AND applied_at IS NOT NULL", (user_id,), fetch="one")["count"]
     high_fit = _exec("SELECT COUNT(*) FROM jobs WHERE user_id = %s AND fit_score >= 7", (user_id,), fetch="one")["count"]
     return {
-        "total": total,
+        "total":   total,
         "applied": applied,
-        "tailored": high_fit, # For dashboard mapping
+        "tailored": high_fit,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Document storage (CV + Cover Letter text in Supabase)
+# ---------------------------------------------------------------------------
+
+def save_job_documents(
+    user_id: int,
+    url: str,
+    cv_text: str,
+    cover_text: str,
+) -> None:
+    """Persist tailored CV and cover letter TEXT directly in Supabase."""
+    init_app_db()
+    now = datetime.now(timezone.utc).isoformat()
+    _exec(
+        """
+        UPDATE jobs
+           SET tailored_resume_text = %s,
+               cover_letter_text    = %s,
+               tailored_at          = %s,
+               cover_letter_at      = %s
+         WHERE user_id = %s AND url = %s
+        """,
+        (cv_text, cover_text, now, now, user_id, url),
+    )
+
+
+def get_job_documents(user_id: int, url: str) -> dict:
+    """Return the stored CV and cover letter texts for a job."""
+    init_app_db()
+    row = _exec(
+        "SELECT tailored_resume_text, cover_letter_text FROM jobs WHERE user_id = %s AND url = %s",
+        (user_id, url),
+        fetch="one",
+    )
+    if not row:
+        return {"cv_text": "", "cover_text": ""}
+    return {
+        "cv_text":    row["tailored_resume_text"] or "",
+        "cover_text": row["cover_letter_text"]    or "",
     }

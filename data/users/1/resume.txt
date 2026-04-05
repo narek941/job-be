@@ -1,0 +1,67 @@
+4/5/26, 10:32 PM Narek Kolyan - Portfolio
+NAREK
+WORK EXPERIENCE
+Senior Frontend Engineer
+KOLYAN
+ShellLogix • Yerevan, Armenia • Oct 2021 – Present
+Outsource-based software company specializing in web and mobile-based work management,
+SENIOR FRONTEND ENGINEER
+project management, and custom digital solutions.
+Data Researcher / Editor
+PROFILE
+Opta Sports (by Stats Perform) • Yerevan / Remote • Nov 2016 – Mar 2025
+Senior Frontend Engineer with 6+ years of World leader in sports AI. With 7.2 petabytes of proprietary sports data and 8 foundation
+experience building scalable web and mobile sports AI models, empowering the world's top sports broadcasters, media, apps, leagues,
+applications using React, TypeScript, and federations, bookmakers and teams.
+modern frontend architectures. Specialized in
+headless e-commerce, GraphQL data layers,
+EDUCATION
+and performance optimization for high-traffic
+applications. Experienced in modular UI
+Bachelor's Degree in Agriculture Marketing & Business (Sep 2018 – Jun
+systems, React Native, and delivering
+2022)
+maintainable, scalable products.
+Armenian National Agrarian University
+Yerevan, Armenia
+KEY ENGINEERING
+ACHIEVEMENTS
+SELECTED PROJECTS
+Designed modular React architecture and
+Accounting Company Website
+scalable frontend systems for high-traffic
+applications My first project - still in use today. Multi-language web application for accounting services in
+Implemented GraphQL data layers and Armenia. Features canvas forms and form-to-email functionality. Built with modern React
+optimized data fetching for complex product stack.
+and analytics UIs
+Built headless Shopify storefronts and custom
+Cryptocurrency Admin Panel
+checkout flows for large-scale e-commerce
+Admin panel for cryptocurrency exchange and statistics. Built for a Ukrainian company.
+Developed AI-powered media generation
+workflows integrating multiple APIs and async Features real-time crypto exchange rates, trading statistics, and comprehensive admin
+processing dashboard. Frontend development only.
+Shipped cross-platform React Native apps with
+BLE, health integrations, and OTA updates Mobile E-commerce Solution
+Migrated state management to scalable
+Ready-to-use mobile shopping apps for 100+ brands across Russia, UK, and US. 5+ analytics
+solutions and improved UI performance across
+variants, custom backend, Shopify integration. Fullstack role (React, React Native, Node.js) in
+dashboards
+40+ team.
+ENGINEERING PRINCIPLES RV Rental Platform
+Built headless Shopify storefront serving thousands of products with optimized GraphQL
+Write maintainable, modular code queries and scalable UI architecture. US-based RV rental platform with custom checkout and
+Optimize performance before scaling campground booking. Worked as React developer on multiple rental projects.
+infrastructure
+Prefer simple architectures over complex
+abstractions
+CONTACT
+Location Yerevan, Armenia
+Phone: +37455818286
+Email: nqolyan@gmail.com
+Website: narek-qolyan-cv.vercel.app
+GitHub: github.com/narek941
+LinkedIn: linkedin.com/in/narek-qolyan-
+4a92b611b
+localhost:3000 1/1

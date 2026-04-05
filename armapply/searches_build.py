@@ -13,7 +13,7 @@ def write_searches_for_user(
     linkedin: bool,
     staff_am_enabled: bool,
     indeed: bool = False,
-    country: str = "ARM",
+    country: str = "worldwide",   # 'ARM' is not accepted by jobspy; staff.am handles Armenia natively
 ) -> None:
     queries: list[dict] = []
     tier = 1
@@ -34,15 +34,16 @@ def write_searches_for_user(
         queries = [{"query": "software developer", "tier": 1}]
 
     locs = locations or [
+        {"location": "Remote", "remote": True},          # remote first — broader results
         {"location": "Yerevan, Armenia", "remote": False},
-        {"location": "Remote", "remote": True},
     ]
 
+    # Priority: staff.am (Armenia-native) first, LinkedIn second
     sites: list[str] = []
-    if linkedin:
-        sites.append("linkedin")
     if indeed:
         sites.append("indeed")
+    if linkedin:
+        sites.append("linkedin")
 
     cfg = {
         "queries": queries,
@@ -54,12 +55,14 @@ def write_searches_for_user(
             "հայաստան",
             "anywhere",
             "distributed",
+            "worldwide",
         ],
         "location_reject_non_remote": [],
-        "country": country,
+        "country": "worldwide",   # jobspy valid value; staff.am ignores this
         "sites": sites if sites else ["linkedin"],
         "defaults": {"results_per_site": 60, "hours_old": 168, "country_indeed": "usa"},
-        "staff_am": {"enabled": staff_am_enabled, "max_pages_per_keyword": 2, "extra_keywords": []},
+        # staff.am runs FIRST (handled by discovery layer before jobspy)
+        "staff_am": {"enabled": staff_am_enabled, "max_pages_per_keyword": 3, "extra_keywords": []},
         "workday": {"enabled": False},
         "smartextract": {"enabled": False},
         "exclude_titles": [],
