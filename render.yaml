@@ -26,5 +26,5 @@ services:
     env: python
     buildCommand: |
       pip install -r requirements.txt
-    command: |
+    startCommand: |
       bash daily_pipeline.sh
