@@ -76,9 +76,11 @@ async def _startup() -> None:
     init_app_db()
     maybe_seed_test_user()
     
-    # Start background scheduler
-    import asyncio
-    asyncio.create_task(background_pipeline_scheduler())
+    # Start background scheduler unless skipped
+    import os
+    if not os.environ.get("ARMAPPLY_SKIP_SCHEDULER"):
+        import asyncio
+        asyncio.create_task(background_pipeline_scheduler())
 
 async def background_pipeline_scheduler():
     """Simple background loop to run discovery for all users periodically."""

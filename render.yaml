@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: armapply-backend
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      playwright install --with-deps chromium
+    startCommand: |
+      export PYTHONPATH=$PYTHONPATH:.
+      uvicorn armapply.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ARMAPPLY_DATA
+        value: /opt/render/project/src/data
+      # Secrets should be added manually in Render Dashboard or Secret Group
+      - fromGroup: armapply-secrets
+    disk:
+      name: armapply-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+
+cronJobs:
+  - name: daily-pipeline
+    schedule: "0 8 * * *" # 8 AM UTC (12 PM AMT)
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+    command: |
+      bash daily_pipeline.sh
