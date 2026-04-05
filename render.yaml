@@ -20,8 +20,8 @@ services:
       mountPath: /opt/render/project/src/data
       sizeGB: 1
 
-cronJobs:
-  - name: daily-pipeline
+  - type: cron
+    name: daily-pipeline
     schedule: "0 8 * * *" # 8 AM UTC (12 PM AMT)
     env: python
     buildCommand: |
