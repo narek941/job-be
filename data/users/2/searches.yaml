@@ -46,15 +46,23 @@ staff_am:
 
 # Публичные каналы: username без @ (пример: itjobsam). Включите enabled: true и список каналов.
 telegram_channels:
-  enabled: false
-  max_pages_per_channel: 2
-  channels: []
+  enabled: true
+  max_pages_per_channel: 3
+  channels:
+    - rabotadlaqa
+    - freeIT_job
+    - vgrecruitingit
+    - jun_qa
   keyword_filter:
-    - вакансия
-    - vacancy
-    - job
+    - armenia
+    - yerevan
     - remote
     - developer
-    - ծրագրավորող
+    - engineer
+    - python
+    - backend
+    - frontend
+    - vacancy
+    - job
 
 exclude_titles: []

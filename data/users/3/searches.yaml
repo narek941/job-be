@@ -37,8 +37,21 @@ staff_am:
   enabled: true
   max_pages_per_keyword: 3
   extra_keywords: []
-workday:
-  enabled: false
-smartextract:
-  enabled: false
-exclude_titles: []
+telegram_channels:
+  enabled: true
+  max_pages_per_channel: 3
+  channels:
+    - rabotadlaqa
+    - freeIT_job
+    - vgrecruitingit
+    - jun_qa
+  keyword_filter:
+    - armenia
+    - yerevan
+    - remote
+    - qa
+    - quality assurance
+    - tester
+    - analyst
+    - vacancy
+    - job
