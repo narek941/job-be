@@ -75,6 +75,9 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
                 if "," in loc:
                     # e.g. "Yerevan, Armenia" -> "Yerevan"
                     kwargs["location"] = loc.split(",")[0].strip()
+                elif loc.lower().strip() in ("armenia", "arm", "am"):
+                    # e.g. "Armenia" -> "" (worldwide search)
+                    kwargs["location"] = ""
                 return scrape_jobs(**kwargs)
 
             transient = any(k in err for k in ("timeout", "429", "proxy", "connection", "reset", "refused"))
