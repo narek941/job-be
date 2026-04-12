@@ -34,7 +34,7 @@ echo "════════════════════════�
 python3 - <<'PYEOF'
 import requests, json, sys, time, os
 
-BASE = os.environ.get("ARMAPPLY_API_URL", "http://localhost:8000")
+BASE = os.environ.get("ARMAPPLY_API_URL", "https://prod-job-apply.onrender.com")
 
 # Login
 try:
