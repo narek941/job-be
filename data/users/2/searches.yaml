@@ -1,14 +1,16 @@
 # ArmApply default searches — Armenia + remote (LinkedIn via JobSpy)
 queries:
-  - query: "software engineer"
+  - query: "senior frontend engineer"
     tier: 1
-  - query: "developer"
+  - query: "react developer"
     tier: 1
-  - query: "ծրագրավորող"
+  - query: "react native engineer"
+    tier: 1
+  - query: "senior react developer"
     tier: 2
-  - query: "full stack"
+  - query: "fullstack developer react"
     tier: 2
-  - query: "Python developer"
+  - query: "frontend architect"
     tier: 2
 
 locations:
