@@ -1,17 +1,10 @@
 services:
   - type: web
     name: armapply-backend
-    env: python
-    buildCommand: |
-      pip install -r requirements.txt
-      pip install -e ./applypilot-src
-      playwright install chromium
-    startCommand: |
-      export PYTHONPATH=$PYTHONPATH:.
-      uvicorn armapply.main:app --host 0.0.0.0 --port $PORT
+    env: docker
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
+      - key: PORT
+        value: "8000"
       - key: ARMAPPLY_DATA
         value: /tmp/data
       - fromGroup: armapply-secrets
@@ -19,8 +12,9 @@ services:
   - type: cron
     name: daily-pipeline
     schedule: "0 8 * * *" # 8 AM UTC (12 PM AMT)
-    env: python
-    buildCommand: |
-      pip install -r requirements.txt
-    startCommand: |
-      bash daily_pipeline.sh
+    env: docker
+    startCommand: bash daily_pipeline.sh
+    envVars:
+      - key: ARMAPPLY_DATA
+        value: /tmp/data
+      - fromGroup: armapply-secrets

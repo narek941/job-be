@@ -20,7 +20,9 @@ if [[ -f .env.test ]]; then
   set +a
 fi
 
-source .venv/bin/activate
+if [[ -f .venv/bin/activate ]]; then
+  source .venv/bin/activate
+fi
 export PYTHONPATH="$(pwd)"
 
 LOG_DATE=$(date '+%Y-%m-%d %H:%M:%S')
