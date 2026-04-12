@@ -672,8 +672,10 @@ async def telegram_webhook(request: Request, user_id: int | None = None) -> dict
            -d "url=https://YOUR_DOMAIN/telegram/webhook/<USER_ID>"
     """
     update = await request.json()
+    # Default to user 2 (Narek) if no ID in URL (global webhook)
+    effective_uid = user_id or 2
     try:
-        handle_telegram_callback(update, user_id=user_id)
+        handle_telegram_callback(update, user_id=effective_uid)
     except Exception as e:
         log.error("Telegram webhook error: %s", e)
     return {"ok": "true"}

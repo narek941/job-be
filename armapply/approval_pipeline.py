@@ -258,6 +258,28 @@ def _send_document_if_exists(chat_id: str, path: str | None, caption: str, asset
 
 def handle_telegram_callback(update: dict, user_id: int | None = None) -> None:
     """Called by the /telegram/webhook endpoint."""
+    from armapply.users_db import update_user_telegram
+
+    # 1. Handle regular messages (to capture chat_id)
+    msg = update.get("message")
+    if msg and user_id:
+        chat_id = str(msg.get("chat", {}).get("id", ""))
+        if chat_id:
+            update_user_telegram(user_id, chat_id)
+            log.info("Captured telegram_chat_id %s for user %d", chat_id, user_id)
+            # Optional: send a greeting
+            token = _get_token(user_id)
+            try:
+                base = f"https://api.telegram.org/bot{token}"
+                httpx.post(f"{base}/sendMessage", json={
+                    "chat_id": chat_id,
+                    "text": "✅ Bot connected! You will receive new job matches here.",
+                    "parse_mode": "Markdown"
+                }, timeout=10)
+            except Exception:
+                pass
+
+    # 2. Handle button clicks
     cb = update.get("callback_query")
     if not cb:
         return
