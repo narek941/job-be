@@ -116,12 +116,12 @@ def generate_tailored_cover_letter(job: dict, language: str = "en") -> str:
 {lang_note}
 
 TONE RULES — extremely important:
-- Sound like a real human being, NOT a corporate robot.
+- Sound like a real human being, NOT a corporate robot. Keep it conversational but professional.
 - No clichés: avoid "I am excited to apply", "I hope this email finds you well", 
   "I am passionate about growing", "synergize", "leverage", "cutting-edge".
-- Be direct, warm, slightly conversational. 180–220 words max.
-- Reference a specific thing from the job description to show you actually read it.
-- FIRST sentence must hook immediately — who you are + one concrete achievement.
+- Make it hyper-specific to the job requirements. Show, don't just tell, that you have the skills they need by citing your exact past work.
+- Be direct and warm. 180–220 words max. Do not use bullet points.
+- FIRST sentence must hook immediately — who you are + one concrete achievement relevant to the role.
 
 CANDIDATE PROFILE:
   Name: {NAME}
@@ -152,39 +152,19 @@ Output ONLY the letter body (no subject line, no signature block)."""
     return client.chat(
         [{"role": "user", "content": prompt}],
         max_tokens=1024,
-        temperature=0.6,
+        temperature=0.7,
     )
 
 def generate_tailored_resume_text(job: dict) -> str:
     """
-    Returns a plain-text CV version tailored to the job —
-    keeps Narek's full structure, highlights relevant skills at the top.
+    Returns the standard plain-text CV version.
+    CV tailoring is disabled by user request to always use the same CV.
     """
-    from armapply.cv_template import render_cv_text, SKILLS
-
-    jd    = (job.get("full_description") or "")[:4000]
-    title = job.get("title") or ""
-
-    # Ask LLM which skills to highlight
-    all_skills = [s for items in SKILLS.values() for s in items]
-    client = get_client()
-    highlight_prompt = f"""Given this job description excerpt, list 5–8 skills from the candidate's profile that are most relevant.
-Return ONLY a comma-separated list, no explanation.
-
-Job title: {title}
-Job description: {jd[:2000]}
-Candidate skills: {', '.join(all_skills)}"""
-
-    try:
-        highlighted = client.chat(
-            [{"role": "user", "content": highlight_prompt}],
-            max_tokens=80, temperature=0.3,
-        ).strip().split(",")
-        highlighted = [s.strip() for s in highlighted if s.strip()]
-    except Exception:
-        highlighted = []
-
-    return render_cv_text(job_title=title, extra_skills=highlighted)
+    from armapply.cv_template import render_cv_text
+    
+    # We no longer use an LLM or highlight specific skills.
+    # Return the static CV identically every time.
+    return render_cv_text()
 
 def extract_profile_from_resume(resume_text: str) -> dict:
     """Uses LLM to extract structured data from a raw resume text."""

@@ -1,13 +1,11 @@
 queries:
-- query: Software Engineer
+- query: Frontend Engineer
   tier: 1
-- query: Developer
-  tier: 2
 locations:
-- location: Yerevan, Armenia
-  remote: false
 - location: Remote
   remote: true
+- location: Yerevan, Armenia
+  remote: false
 location_accept:
 - yerevan
 - armenia
@@ -15,8 +13,9 @@ location_accept:
 - հայաստան
 - anywhere
 - distributed
+- worldwide
 location_reject_non_remote: []
-country: ARM
+country: worldwide
 sites:
 - linkedin
 defaults:
@@ -25,7 +24,7 @@ defaults:
   country_indeed: usa
 staff_am:
   enabled: true
-  max_pages_per_keyword: 2
+  max_pages_per_keyword: 3
   extra_keywords: []
 workday:
   enabled: false

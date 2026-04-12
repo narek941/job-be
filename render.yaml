@@ -4,6 +4,7 @@ services:
     env: python
     buildCommand: |
       pip install -r requirements.txt
+      pip install -e ./applypilot-src
       playwright install --with-deps chromium
     startCommand: |
       export PYTHONPATH=$PYTHONPATH:.
@@ -12,13 +13,8 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: ARMAPPLY_DATA
-        value: /opt/render/project/src/data
-      # Secrets should be added manually in Render Dashboard or Secret Group
+        value: /tmp/data
       - fromGroup: armapply-secrets
-    disk:
-      name: armapply-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
 
   - type: cron
     name: daily-pipeline

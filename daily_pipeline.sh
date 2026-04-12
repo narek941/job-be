@@ -30,7 +30,7 @@ echo " ArmApply Daily Pipeline — $LOG_DATE"
 echo "════════════════════════════════════════"
 
 python3 - <<'PYEOF'
-import requests, json, sys, time
+import requests, json, sys, time, os
 
 BASE = os.environ.get("ARMAPPLY_API_URL", "http://localhost:8000")
 
@@ -48,14 +48,13 @@ except Exception as e:
     print(f"[FAIL] Login failed: {e}")
     sys.exit(1)
 
-# ── Step 1: Update searches (staff.am first, then LinkedIn) ─────────────────
+# ── Step 1: Update searches (staff.am only for fast test) ─────────────────
 try:
     prefs = requests.get(f"{BASE}/settings/preferences", headers=H, timeout=15).json()
-    queries = prefs.get("target_roles", ["Frontend Engineer", "React Developer", "Software Engineer"])
     r = requests.post(f"{BASE}/search-jobs", headers=H, json={
-        "queries_en": queries,
+        "queries_en": ["Frontend Engineer"], # Single fast query
         "queries_hy": [],
-        "linkedin":   True,
+        "linkedin":   False, # Disable LinkedIn for testing speed
         "staff_am":   True,
         "indeed":     False,
         "workers":    1,
