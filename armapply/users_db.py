@@ -25,7 +25,7 @@ def _raw_db_url() -> str:
     # Fallback: build from individual parts (using pooler for reliability on Render)
     host = os.environ.get("SUPABASE_DB_HOST", "aws-1-eu-central-1.pooler.supabase.com")
     user = os.environ.get("SUPABASE_DB_USER", "postgres.sgmbcveoxfkgcmfkvxuh")
-    password = os.environ.get("SUPABASE_DB_PASSWORD", "")
+    password = os.environ.get("SUPABASE_DB_PASSWORD", "6%267%2CM9spJZmYrKe")
     return f"postgresql://{user}:{password}@{host}:6543/postgres"
 
 
