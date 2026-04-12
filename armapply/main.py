@@ -664,15 +664,16 @@ from armapply.approval_pipeline import (
 
 
 @app.post("/telegram/webhook")
-async def telegram_webhook(request: Request) -> dict[str, str]:
+@app.post("/telegram/webhook/{user_id}")
+async def telegram_webhook(request: Request, user_id: int | None = None) -> dict[str, str]:
     """
     Register this URL with Telegram:
       curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
-           -d "url=https://YOUR_DOMAIN/telegram/webhook"
+           -d "url=https://YOUR_DOMAIN/telegram/webhook/<USER_ID>"
     """
     update = await request.json()
     try:
-        handle_telegram_callback(update)
+        handle_telegram_callback(update, user_id=user_id)
     except Exception as e:
         log.error("Telegram webhook error: %s", e)
     return {"ok": "true"}

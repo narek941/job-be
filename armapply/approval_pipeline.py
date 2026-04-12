@@ -24,6 +24,13 @@ import httpx
 from armapply.config import TELEGRAM_BOT_TOKEN
 from armapply.telegram_notify import send_telegram_message
 
+
+def _get_token(user_id: int) -> str:
+    """Fetch user-specific bot token from Supabase prefs or fallback."""
+    from armapply.users_db import get_user_preferences
+    prefs = get_user_preferences(user_id)
+    return prefs.get("telegram_bot_token") or TELEGRAM_BOT_TOKEN
+
 log = logging.getLogger(__name__)
 
 # ── Gmail credentials (OAuth2 or App Password) ─────────────────────────────
@@ -140,8 +147,9 @@ def send_approval_request(
     Send job preview + PDF files to Telegram with Approve / Skip buttons.
     Returns the callback_key stored in _PENDING.
     """
-    if not TELEGRAM_BOT_TOKEN or not chat_id:
-        log.warning("Telegram not configured; skipping approval request.")
+    token = _get_token(user_id)
+    if not token or not chat_id:
+        log.warning("Telegram not configured for user %d; skipping approval request.", user_id)
         return None
 
     title     = job.get("title") or "Untitled"
@@ -198,13 +206,13 @@ def send_approval_request(
         return None
 
     # 2. Attach CV PDF if available
-    _send_document_if_exists(chat_id, assets.get("cv_pdf"),    "📄 Tailored CV",    assets=assets, doc_type="cv")
-    _send_document_if_exists(chat_id, assets.get("cover_pdf"), "✉️ Cover Letter", assets=assets, doc_type="cover")
+    _send_document_if_exists(chat_id, assets.get("cv_pdf"),    "📄 Tailored CV",    assets=assets, doc_type="cv", bot_token=token)
+    _send_document_if_exists(chat_id, assets.get("cover_pdf"), "✉️ Cover Letter", assets=assets, doc_type="cover", bot_token=token)
 
     return key
 
 
-def _send_document_if_exists(chat_id: str, path: str | None, caption: str, assets: dict | None = None, doc_type: str = "cv") -> None:
+def _send_document_if_exists(chat_id: str, path: str | None, caption: str, assets: dict | None = None, doc_type: str = "cv", bot_token: str | None = None) -> None:
     """Send document, fall back to Supabase text if file is missing."""
     import tempfile
     from armapply.users_db import get_job_documents
@@ -232,7 +240,7 @@ def _send_document_if_exists(chat_id: str, path: str | None, caption: str, asset
     if not effective_path or not Path(effective_path).exists():
         return
 
-    base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    base = f"https://api.telegram.org/bot{bot_token or TELEGRAM_BOT_TOKEN}"
     try:
         with open(effective_path, "rb") as f:
             httpx.post(f"{base}/sendDocument", data={
@@ -248,7 +256,7 @@ def _send_document_if_exists(chat_id: str, path: str | None, caption: str, asset
 # STEP 4:  Handle Telegram webhook callback
 # ═══════════════════════════════════════════════════════════════════════════
 
-def handle_telegram_callback(update: dict) -> None:
+def handle_telegram_callback(update: dict, user_id: int | None = None) -> None:
     """Called by the /telegram/webhook endpoint."""
     cb = update.get("callback_query")
     if not cb:
@@ -258,45 +266,56 @@ def handle_telegram_callback(update: dict) -> None:
     message_id    = cb.get("message", {}).get("message_id")
     chat_id       = str(cb.get("message", {}).get("chat", {}).get("id", ""))
 
-    _answer_callback(cb["id"])
+    # Find the record to get the user_id if not provided
+    record = None
+    if callback_data.startswith(("approve:", "skip:")):
+        key = callback_data.split(":", 1)[1]
+        record = _PENDING.get(key)
+    
+    effective_uid = user_id or (record["user_id"] if record else None)
+    token = _get_token(effective_uid) if effective_uid else TELEGRAM_BOT_TOKEN
+
+    _answer_callback(cb["id"], bot_token=token)
 
     if callback_data.startswith("approve:"):
         key = callback_data.split(":", 1)[1]
         record = _PENDING.pop(key, None)
         if record:
-            _edit_message(chat_id, message_id, "⏳ Sending application via Gmail…")
+            _edit_message(chat_id, message_id, "⏳ Sending application via Gmail…", bot_token=token)
             success = send_via_gmail(record)
             if success:
                 _edit_message(chat_id, message_id,
-                    f"✅ Application sent for *{record['job_title']}*!")
+                    f"✅ Application sent for *{record['job_title']}*!", bot_token=token)
                 # Mark job as applied in DB
                 _mark_applied(record["user_id"], record["job_url"])
             else:
                 _edit_message(chat_id, message_id,
-                    "❌ Gmail send failed. Check GMAIL_SENDER & GMAIL_APP_PASSWORD env vars.")
+                    "❌ Gmail send failed. Check GMAIL_SENDER & GMAIL_APP_PASSWORD env vars.", bot_token=token)
         else:
-            _edit_message(chat_id, message_id, "⚠️ Approval already processed or expired.")
+            _edit_message(chat_id, message_id, "⚠️ Approval already processed or expired.", bot_token=token)
 
     elif callback_data.startswith("skip:"):
         key = callback_data.split(":", 1)[1]
         _PENDING.pop(key, None)
-        _edit_message(chat_id, message_id, "⏭️ Job skipped.")
+        _edit_message(chat_id, message_id, "⏭️ Job skipped.", bot_token=token)
 
 
-def _answer_callback(callback_query_id: str) -> None:
+def _answer_callback(callback_query_id: str, bot_token: str | None = None) -> None:
+    token = bot_token or TELEGRAM_BOT_TOKEN
     try:
-        httpx.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+        httpx.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery",
                    json={"callback_query_id": callback_query_id}, timeout=5)
     except Exception:
         pass
 
 
-def _edit_message(chat_id: str, message_id: int | None, text: str) -> None:
+def _edit_message(chat_id: str, message_id: int | None, text: str, bot_token: str | None = None) -> None:
+    token = bot_token or TELEGRAM_BOT_TOKEN
     if not message_id:
-        send_telegram_message(chat_id, text)
+        send_telegram_message(chat_id, text, bot_token=token)
         return
     try:
-        httpx.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText", json={
+        httpx.post(f"https://api.telegram.org/bot{token}/editMessageText", json={
             "chat_id":    chat_id,
             "message_id": message_id,
             "text":       text[:4096],

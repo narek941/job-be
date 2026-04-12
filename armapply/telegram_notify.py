@@ -9,10 +9,11 @@ from armapply.config import TELEGRAM_BOT_TOKEN
 log = logging.getLogger(__name__)
 
 
-def send_telegram_message(chat_id: str, text: str) -> bool:
-    if not TELEGRAM_BOT_TOKEN or not chat_id:
+def send_telegram_message(chat_id: str, text: str, bot_token: str | None = None) -> bool:
+    token = bot_token or TELEGRAM_BOT_TOKEN
+    if not token or not chat_id:
         return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         r = httpx.post(url, json={
             "chat_id": chat_id, 
