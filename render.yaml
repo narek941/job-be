@@ -5,7 +5,7 @@ services:
     buildCommand: |
       pip install -r requirements.txt
       pip install -e ./applypilot-src
-      playwright install --with-deps chromium
+      playwright install chromium
     startCommand: |
       export PYTHONPATH=$PYTHONPATH:.
       uvicorn armapply.main:app --host 0.0.0.0 --port $PORT
