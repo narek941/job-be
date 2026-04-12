@@ -1,6 +1,7 @@
 """ArmApply application database (users, logs) — PostgreSQL/Supabase backend."""
 
 from __future__ import annotations
+from typing import Any
 
 import json
 import os
@@ -21,10 +22,11 @@ def _raw_db_url() -> str:
     url = os.environ.get("DATABASE_URL", "")
     if url:
         return url
-    # Fallback: build from individual parts
-    host = os.environ.get("SUPABASE_DB_HOST", "db.sgmbcveoxfkgcmfkvxuh.supabase.co")
+    # Fallback: build from individual parts (using pooler for reliability on Render)
+    host = os.environ.get("SUPABASE_DB_HOST", "aws-1-eu-central-1.pooler.supabase.com")
+    user = os.environ.get("SUPABASE_DB_USER", "postgres.sgmbcveoxfkgcmfkvxuh")
     password = os.environ.get("SUPABASE_DB_PASSWORD", "")
-    return f"postgresql://postgres:{password}@{host}:5432/postgres"
+    return f"postgresql://{user}:{password}@{host}:6543/postgres"
 
 
 def _conn() -> psycopg2.extensions.connection:

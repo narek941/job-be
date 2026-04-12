@@ -1,0 +1,71 @@
+{
+  "personal": {
+    "full_name": "Laura Arakelyan",
+    "preferred_name": "Laura",
+    "role_title": "Quality Assurance Engineer / Data Analyst",
+    "email": "arakelyanlaura0@gmail.com",
+    "phone": "+37455290919",
+    "address": "",
+    "city": "Yerevan",
+    "province_state": "",
+    "country": "Armenia",
+    "postal_code": "",
+    "linkedin_url": "https://linkedin.com/in/laura-arakelyan-77a560131",
+    "github_url": "",
+    "portfolio_url": "",
+    "website_url": "",
+    "bio": "Quality Assurance Engineer and Data Analyst with a background in Applied Mathematics and Informatics. Experienced in data analysis at Stats Perform and specialized in manual testing techniques, API testing with Postman, and database management. Passionate about software quality and user experience.",
+    "skills": "API Testing, Postman, SQL, Database Management, Trello, Jira, TestRail, HTML/CSS, JMeter, Git, DevTools, Black Box Testing, Opta Core, Researching, Adobe Photoshop, Illustrator",
+    "work_experience_text": "Data Analyst @ Stats Perform (2019 – Present, Yerevan):\n- Specialized in data analysis and research for sports datasets.\n- Used Opta Core for data management and validation.\n\nCredit Specialist @ Converse Bank (2017 – 2019, Yerevan):\n- Managed credit applications and client relations.\n\nSales Manager @ Converse Bank (2016 – 2017).\n\nBack office assistant & Service Specialist @ Inecobank (2016).",
+    "education_text": "Bachelor's Degree in Applied Mathematics and Informatics\nNational Polytechnic University of Armenia (2013 – 2017, Yerevan, Armenia)\n\nCertification Courses:\n- Manual QA @ BDG (2024)\n- Manual QA @ GITC (2023)\n- UX/UI @ BDG (2021)\n- Adobe Photoshop & Illustrator @ Base Design Studio (2021)",
+    "links_text": "LinkedIn: linkedin.com/in/laura-arakelyan-77a560131",
+    "languages": "Armenian: Native, Russian: Advanced, English: Intermediate"
+  },
+  "work_authorization": {
+    "legally_authorized_to_work": "Yes",
+    "require_sponsorship": "No",
+    "work_permit_type": ""
+  },
+  "availability": {
+    "earliest_start_date": "Immediately",
+    "available_for_full_time": "Yes",
+    "available_for_contract": "Yes"
+  },
+  "compensation": {
+    "salary_expectation": "",
+    "salary_currency": "USD",
+    "salary_range_min": "",
+    "salary_range_max": "",
+    "currency_conversion_note": ""
+  },
+  "experience": {
+    "years_of_experience_total": "1",
+    "education_level": "Bachelor's Degree",
+    "current_job_title": "Data Analyst",
+    "current_company": "Stats Perform",
+    "target_role": "QA Intern / Junior QA Engineer"
+  },
+  "skills_boundary": {
+    "languages": ["SQL", "HTML", "CSS"],
+    "frameworks": [],
+    "devops": ["Git", "Postman", "JMeter"],
+    "databases": ["SQL"],
+    "tools": ["Jira", "Trello", "TestRail", "DevTools", "Photoshop", "Illustrator"]
+  },
+  "resume_facts": {
+    "preserved_companies": ["Stats Perform", "Converse Bank", "Inecobank"],
+    "preserved_projects": [],
+    "preserved_school": "National Polytechnic University of Armenia",
+    "real_metrics": [
+      "Manual QA certified (BDG, GITC)",
+      "UX/UI certified (BDG)",
+      "5+ years professional experience"
+    ]
+  },
+  "eeo_voluntary": {
+    "gender": "Female",
+    "race_ethnicity": "Decline to self-identify",
+    "veteran_status": "I am not a protected veteran",
+    "disability_status": "I do not wish to answer"
+  }
+}

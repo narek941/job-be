@@ -1,0 +1,48 @@
+Laura Arakelyan
+QA Intern / Junior QA Engineer | Quality Assurance / Data Analyst
+
+CONTACT
+Email: arakelyanlaura0@gmail.com
+LinkedIn: linkedin.com/in/laura-arakelyan-77a560131
+Phone: +37455290919
+Location: Yerevan, Armenia
+
+SKILLS
+• Basic Knowledge of API Testing with Postman
+• Basic Knowledge of SQL and Database
+• Management and Bug Tracking Tools - Trello, Jira
+• Test Case Management Tool - TestRail
+• Basic Knowledge of HTML/CSS
+• Basic Knowledge of JMeter
+• Basic Knowledge of Git
+• Ability to Use DevTools During Testing
+• Knowledge of Black Box Testing Techniques
+• Opta Core
+• Researching
+
+WORK EXPERIENCE
+Stats Perform
+Data Analyst | 2019 - Present
+- Specialized in sports data analysis and management.
+
+Converse Bank
+Credit Specialist | 2017 - 2019
+Sales Manager | 2016 - 2017
+
+Inecobank
+Back office assistant / Service Specialist | 2016
+
+EDUCATION
+National Polytechnic University of Armenia
+Bachelor's Degree in Applied Mathematics and Informatics | 2013 - 2017
+
+LANGUAGES
+• Armenian: Native
+• English: Intermediate
+• Russian: Advanced
+
+CERTIFICATIONS
+• Manual QA @ BDG (2024)
+• Manual QA @ GITC (2023)
+• UX/UI @ BDG (2021)
+• Adobe Photoshop & Illustrator @ Base Design Studio (2021)
