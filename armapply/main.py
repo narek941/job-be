@@ -674,6 +674,18 @@ async def telegram_webhook(request: Request, user_id: int | None = None) -> dict
     update = await request.json()
     # Default to user 2 (Narek) if no ID in URL (global webhook)
     effective_uid = user_id or 2
+    
+    # Log the update for debugging
+    try:
+        from armapply.users_db import _exec
+        from datetime import datetime, timezone
+        _exec(
+            "INSERT INTO api_logs (user_id, method, path, status_code, detail, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (effective_uid, "POST", f"/telegram/webhook/{user_id or ''}", 200, json.dumps(update), datetime.now(timezone.utc).isoformat())
+        )
+    except Exception as e:
+        log.error("Failed to log webhook: %s", e)
+
     try:
         handle_telegram_callback(update, user_id=effective_uid)
     except Exception as e:
