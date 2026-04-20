@@ -15,7 +15,7 @@ services:
     name: job-be
     schedule: "0 8 * * *" # 8 AM UTC (12 PM AMT)
     env: docker
-    dockerCommand: bash daily-autopilot.sh
+    dockerCommand: python3 /app/armapply/cron_autopilot.py
     envVars:
       - key: ARMAPPLY_API_URL
         value: https://prod-job-apply.onrender.com
