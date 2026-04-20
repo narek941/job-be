@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: armapply-backend
+    name: prod-job-apply
     env: docker
     envVars:
       - key: PORT
@@ -10,11 +10,14 @@ services:
       - fromGroup: armapply-secrets
 
   - type: cron
-    name: daily-pipeline
+    name: job-be
     schedule: "0 8 * * *" # 8 AM UTC (12 PM AMT)
-    env: docker
+    env: python
+    buildCommand: pip install requests
     startCommand: bash daily_pipeline.sh
     envVars:
+      - key: ARMAPPLY_API_URL
+        value: https://prod-job-apply.onrender.com
       - key: ARMAPPLY_DATA
         value: /tmp/data
       - fromGroup: armapply-secrets

@@ -13,3 +13,4 @@ slowapi>=0.1.9
 pdfplumber>=0.11.0
 python-jobspy>=1.1
 psycopg2-binary>=2.9.9
+requests>=2.31.0

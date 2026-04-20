@@ -39,7 +39,7 @@ BASE = os.environ.get("ARMAPPLY_API_URL", "https://prod-job-apply.onrender.com")
 # Run for all production users
 USERS = [
     {"email": "narek@armapply.am", "pass": "NarekPass321"}, # Update if actual pass is different
-    {"email": "arakelyanlaura0@gmail.com", "pass": "LauraPass123"}
+    {"email": "arakelyanlaura0@gmail.com", "pass": "LauraPass123!"}
 ]
 
 for user_info in USERS:
