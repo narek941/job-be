@@ -5,6 +5,8 @@ services:
     envVars:
       - key: PORT
         value: "8000"
+      - key: ARMAPPLY_SKIP_SCHEDULER
+        value: "true"
       - key: ARMAPPLY_DATA
         value: /tmp/data
       - fromGroup: armapply-secrets

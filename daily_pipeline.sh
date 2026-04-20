@@ -63,7 +63,7 @@ for user_info in USERS:
             "linkedin":   True,
             "staff_am":   True,
             "indeed":     True,
-            "workers":    2,
+            "workers":    1,
         }, timeout=1200)
         print(f"[OK] Discovery triggered")
     except Exception as e:
