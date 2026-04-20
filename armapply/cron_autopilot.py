@@ -45,7 +45,7 @@ def run_for_user(user: dict):
     try:
         # 1. Discovery
         def _discover():
-            return discover_and_enrich(workers=2)
+            return discover_and_enrich(workers=1)
         
         disc_res = run_in_pipeline(uid, _discover)
         new_jobs = disc_res.get("new_jobs", 0)

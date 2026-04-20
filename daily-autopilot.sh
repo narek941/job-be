@@ -18,8 +18,8 @@ if [[ -f .env.test ]]; then
   set +a
 fi
 
-# Run the autopilot script via uv (if uv available) or .venv
+# Run the autopilot script globally
 export PYTHONPATH="."
-./.venv/bin/python3 armapply/cron_autopilot.py | tee -a "$LOG_FILE"
+python3 armapply/cron_autopilot.py | tee -a "$LOG_FILE"
 
 echo "--- ArmApply Autopilot Finished $(date) ---" | tee -a "$LOG_FILE"
