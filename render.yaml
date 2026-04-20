@@ -14,9 +14,8 @@ services:
   - type: cron
     name: job-be
     schedule: "0 8 * * *" # 8 AM UTC (12 PM AMT)
-    env: python
-    buildCommand: pip install requests
-    startCommand: bash daily_pipeline.sh
+    env: docker
+    dockerCommand: bash daily_pipeline.sh
     envVars:
       - key: ARMAPPLY_API_URL
         value: https://prod-job-apply.onrender.com
