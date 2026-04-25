@@ -2,6 +2,7 @@ name: Daily Job Pipeline
 
 on:
   schedule:
+    # Run every day at 4:00 AM UTC (8:00 AM Yerevan time, UTC+4)
     - cron: "0 4 * * *"
   workflow_dispatch:
 
@@ -15,20 +16,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Waking up service at: ${{ secrets.RENDER_URL }}"
+          echo "Waking up service at: ${{ vars.RENDER_URL }}"
 
-          for i in {1..24}; do
-            CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
-              --max-time 10 \
-              "${{ secrets.RENDER_URL }}/health" || true)
+          # Poll /health until it's up (max ~10 minutes)
+          for i in {1..120}; do
+            RESPONSE=$(curl -sS -L --max-time 20 \
+              -w "\n%{http_code}" \
+              "${{ vars.RENDER_URL }}/health" || true)
+
+            BODY=$(printf "%s" "$RESPONSE" | sed '$d')
+            CODE=$(printf "%s" "$RESPONSE" | tail -n 1)
 
             echo "health -> $CODE"
             if [ "$CODE" = "200" ]; then
               echo "Service is awake."
-              break
+              exit 0
             fi
+
+            echo "body (first 200 chars): $(printf "%s" "$BODY" | head -c 200)"
             sleep 5
           done
+
+          echo "❌ Service did not become healthy in time"
+          exit 1
 
       - name: Trigger daily pipeline
         shell: bash
@@ -41,7 +51,7 @@ jobs:
             -w "\n%{http_code}" \
             -X POST \
             -H "X-Pipeline-Secret: ${{ secrets.PIPELINE_SECRET }}" \
-            "${{ secrets.RENDER_URL }}/pipeline/cron")
+            "${{ vars.RENDER_URL }}/pipeline/cron")
 
           BODY=$(printf "%s" "$RESPONSE" | sed '$d')
           HTTP_CODE=$(printf "%s" "$RESPONSE" | tail -n 1)
