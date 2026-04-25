@@ -559,8 +559,9 @@ def run_full_discovery(user_id: int, search_config: dict | None = None) -> dict:
     if total_new > 0:
         prefs = get_user_preferences(user_id)
         chat_id = prefs.get("telegram_chat_id")
-        if chat_id:
-            send_telegram_message(str(chat_id), f"🔍 ArmApply: Found {total_new} new jobs for you!")
+        bot_token = prefs.get("telegram_bot_token")
+        if chat_id and bot_token:
+            send_telegram_message(str(chat_id), f"🔍 ArmApply: Found {total_new} new jobs for you!", bot_token=bot_token)
 
     log.info("Full discovery for user %d: %d new, %d updated", user_id, total_new, total_updated)
     return results

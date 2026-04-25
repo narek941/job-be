@@ -69,8 +69,9 @@ def run_pipeline_for_user(user_id: int) -> dict:
     from armapply.users_db import get_user_preferences
     prefs = get_user_preferences(user_id)
     chat_id = prefs.get("telegram_chat_id")
+    bot_token = prefs.get("telegram_bot_token")  # per-user bot
 
-    if chat_id:
+    if chat_id and bot_token:
         try:
             rows = _exec(
                 "SELECT url, title, site, location, fit_score, score_reasoning, "
@@ -86,6 +87,7 @@ def run_pipeline_for_user(user_id: int) -> dict:
                         chat_id=str(chat_id),
                         job=dict(row),
                         cover_letter_text=row.get("cover_letter_text"),
+                        bot_token=bot_token,
                     )
                     update_job_field(user_id, row["url"], "agent_id", "notified")
                     result["notified"] += 1
@@ -102,7 +104,7 @@ def run_pipeline_for_user(user_id: int) -> dict:
                 (user_id,), fetch="one"
             )
             if stats and stats.get("new_today", 0) > 0:
-                send_daily_summary(str(chat_id), dict(stats))
+                send_daily_summary(str(chat_id), dict(stats), bot_token=bot_token)
 
         except Exception as e:
             log.error("[User %d] Notification sweep failed: %s", user_id, e)
