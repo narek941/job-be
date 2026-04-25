@@ -1,46 +1,57 @@
-- name: Wake up Render service
-  run: |
-    set -euo pipefail
-    echo "Waking up service at: ${{ secrets.RENDER_URL }}"
+name: Daily Job Pipeline
 
-    # Poll /health until it's up (max ~2 minutes)
-    for i in {1..24}; do
-      CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
-        --max-time 10 \
-        "${{ secrets.RENDER_URL }}/health" || true)
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
 
-      echo "health -> $CODE"
-      if [ "$CODE" = "200" ]; then
-        echo "Service is awake."
-        exit 0
-      fi
-      sleep 5
-    done
+jobs:
+  trigger-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
 
-    echo "❌ Service did not wake up in time"
-    exit 1
+    steps:
+      - name: Wake up Render service
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Waking up service at: ${{ secrets.RENDER_URL }}"
 
-- name: Trigger daily pipeline
-  run: |
-    set -euo pipefail
+          for i in {1..24}; do
+            CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
+              --max-time 10 \
+              "${{ secrets.RENDER_URL }}/health" || true)
 
-    RESPONSE=$(curl -sS -L \
-      --retry 10 --retry-all-errors --retry-delay 5 \
-      --max-time 120 \
-      -w "\n%{http_code}" \
-      -X POST \
-      -H "X-Pipeline-Secret: ${{ secrets.PIPELINE_SECRET }}" \
-      "${{ secrets.RENDER_URL }}/pipeline/cron")
+            echo "health -> $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "Service is awake."
+              break
+            fi
+            sleep 5
+          done
 
-    BODY=$(printf "%s" "$RESPONSE" | sed '$d')
-    HTTP_CODE=$(printf "%s" "$RESPONSE" | tail -n 1)
+      - name: Trigger daily pipeline
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    echo "HTTP Code: $HTTP_CODE"
-    echo "Response: $BODY"
+          RESPONSE=$(curl -sS -L \
+            --retry 10 --retry-all-errors --retry-delay 5 \
+            --max-time 120 \
+            -w "\n%{http_code}" \
+            -X POST \
+            -H "X-Pipeline-Secret: ${{ secrets.PIPELINE_SECRET }}" \
+            "${{ secrets.RENDER_URL }}/pipeline/cron")
 
-    if [ "$HTTP_CODE" -ne 200 ]; then
-      echo "❌ Pipeline trigger failed with HTTP $HTTP_CODE"
-      exit 1
-    fi
+          BODY=$(printf "%s" "$RESPONSE" | sed '$d')
+          HTTP_CODE=$(printf "%s" "$RESPONSE" | tail -n 1)
 
-    echo "✅ Pipeline triggered successfully"
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "❌ Pipeline trigger failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          echo "✅ Pipeline triggered successfully"
