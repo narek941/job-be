@@ -1,3 +1,3 @@
-"""ArmApply API — FastAPI layer over ApplyPilot (AGPL-3.0)."""
+"""ArmApply API — standalone job discovery & AI matching platform."""
 
-__version__ = "0.1.0"
+__version__ = "2.0.0"

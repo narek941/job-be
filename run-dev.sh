@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Запуск API с тестовыми переменными (можно переопределить из окружения).
+# Run the API with test environment variables (can override from environment).
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ -f .env.test ]]; then
@@ -18,8 +18,6 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 PY="${ROOT}/.venv/bin/python3"
-"$PY" -m pip install -q -e ./applypilot-src
 "$PY" -m pip install -q -r requirements.txt
-"$PY" -m playwright install chromium
 export PYTHONPATH="$ROOT"
 exec "$PY" -m uvicorn armapply.main:app --host 0.0.0.0 --port 8000 --reload

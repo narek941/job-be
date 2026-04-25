@@ -177,6 +177,11 @@ def init_app_db() -> None:
             _exec(f"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS {col} {typedef}")
         except Exception:
             pass
+    # Add resume_text column to users table
+    try:
+        _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS resume_text TEXT")
+    except Exception:
+        pass
     conn.commit()
 
 
@@ -232,7 +237,11 @@ def get_user_preferences(user_id: int) -> dict:
     if not u:
         return {}
     try:
-        return json.loads(u["preferences_json"] or "{}")
+        prefs = json.loads(u["preferences_json"] or "{}")
+        # Also inject telegram_chat_id into prefs for convenience
+        if u.get("telegram_chat_id"):
+            prefs["telegram_chat_id"] = u["telegram_chat_id"]
+        return prefs
     except json.JSONDecodeError:
         return {}
 
@@ -422,3 +431,40 @@ def get_job_documents(user_id: int, url: str) -> dict:
         "cv_text":    row["tailored_resume_text"] or "",
         "cover_text": row["cover_letter_text"]    or "",
     }
+
+
+# ---------------------------------------------------------------------------
+# Resume storage (in users table)
+# ---------------------------------------------------------------------------
+
+def get_user_resume(user_id: int) -> str | None:
+    """Get the user's resume text from the database."""
+    u = get_user_by_id(user_id)
+    if not u:
+        return None
+    return u.get("resume_text") or None
+
+
+def save_user_resume(user_id: int, text: str) -> None:
+    """Save resume text directly in the users table."""
+    init_app_db()
+    _exec("UPDATE users SET resume_text = %s WHERE id = %s", (text, user_id))
+
+
+def get_users_with_autopilot() -> list[dict]:
+    """Fetch all users that have autopilot enabled in their preferences."""
+    init_app_db()
+    rows = _exec("SELECT * FROM users", fetch="all")
+    if not rows:
+        return []
+    active = []
+    for row in rows:
+        try:
+            prefs = json.loads(row.get("preferences_json") or "{}")
+        except json.JSONDecodeError:
+            prefs = {}
+        if prefs.get("auto_pilot", False):
+            row_dict = dict(row)
+            row_dict["prefs"] = prefs
+            active.append(row_dict)
+    return active

@@ -1,0 +1,42 @@
+name: Daily Job Pipeline
+
+on:
+  schedule:
+    # Run every day at 4:00 AM UTC (8:00 AM Yerevan time, UTC+4)
+    - cron: '0 4 * * *'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  trigger-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Wake up Render service
+        # Render free tier sleeps after 15 min — this wakes it up
+        run: |
+          echo "Waking up service..."
+          curl -s -o /dev/null -w "%{http_code}" \
+            ${{ secrets.RENDER_URL }}/health || true
+          echo "Waiting 30s for service to start..."
+          sleep 30
+
+      - name: Trigger daily pipeline
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "X-Pipeline-Secret: ${{ secrets.PIPELINE_SECRET }}" \
+            ${{ secrets.RENDER_URL }}/pipeline/cron)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+
+          echo "Response: $BODY"
+          echo "HTTP Code: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "❌ Pipeline trigger failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          echo "✅ Pipeline triggered successfully"

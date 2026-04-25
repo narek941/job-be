@@ -1,4 +1,4 @@
-"""Опционально создать тестового пользователя при старте (только для локальной разработки)."""
+"""Optionally create a test user on startup (for local development only)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import os
 
 from armapply.auth_deps import hash_password
 from armapply.users_db import create_user, get_user_by_email, init_app_db
-from armapply.workspace import ensure_user_workspace
 
 log = logging.getLogger(__name__)
 
@@ -30,5 +29,4 @@ def maybe_seed_test_user() -> None:
         return
 
     uid = create_user(email, hash_password(password))
-    ensure_user_workspace(uid)
     log.info("Dev seed: created %s (user id=%s) — use this to log in from the app", email, uid)

@@ -1,24 +1,23 @@
 services:
   - type: web
-    name: prod-job-apply
-    env: docker
+    name: armapply-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
     envVars:
-      - key: PORT
-        value: "8000"
-      - key: ARMAPPLY_SKIP_SCHEDULER
+      - key: DATABASE_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ARMAPPLY_JWT_SECRET
+        sync: false
+      - key: PIPELINE_SECRET
+        sync: false
+      - key: ARMAPPLY_SEED_TEST_USER
         value: "true"
-      - key: ARMAPPLY_DATA
-        value: /tmp/data
-      - fromGroup: armapply-secrets
-
-  - type: cron
-    name: job-be
-    schedule: "0 8 * * *" # 8 AM UTC (12 PM AMT)
-    env: docker
-    dockerCommand: python3 /app/armapply/cron_autopilot.py
-    envVars:
-      - key: ARMAPPLY_API_URL
-        value: https://prod-job-apply.onrender.com
-      - key: ARMAPPLY_DATA
-        value: /tmp/data
-      - fromGroup: armapply-secrets
+      - key: ARMAPPLY_TEST_USER_EMAIL
+        sync: false
+      - key: ARMAPPLY_TEST_USER_PASSWORD
+        sync: false

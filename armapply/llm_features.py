@@ -1,16 +1,15 @@
-"""LLM: подготовка к интервью и черновик ответа рекрутеру (без автоотправки)."""
+"""LLM features: interview prep, recruiter reply drafts, cover letters, profile extraction.
+
+Uses armapply.llm_client instead of applypilot.llm.
+"""
 
 from __future__ import annotations
 
-from applypilot.config import load_profile
-from applypilot.llm import get_client
+from armapply.llm_client import get_client
 
 
 def generate_interview_prep(job: dict, language: str = "ru") -> str:
-    profile = load_profile()
-    name = (profile.get("personal") or {}).get("preferred_name") or (profile.get("personal") or {}).get(
-        "full_name", "Candidate"
-    )
+    """Generate interview preparation materials for a job."""
     jd = (job.get("full_description") or job.get("description") or "")[:8000]
     title = job.get("title") or ""
     company = job.get("site") or ""
@@ -23,7 +22,6 @@ def generate_interview_prep(job: dict, language: str = "ru") -> str:
 
     prompt = f"""You are a career coach. {lang_note}
 
-Candidate: {name}
 Target role title (from listing): {title}
 Company/source label: {company}
 
@@ -54,9 +52,7 @@ def generate_recruiter_reply_draft(
     language: str = "ru",
     tone: str = "professional_warm",
 ) -> str:
-    profile = load_profile()
-    personal = profile.get("personal") or {}
-    name = personal.get("preferred_name") or personal.get("full_name", "")
+    """Generate a draft reply to a recruiter message."""
     jd = (job.get("full_description") or "")[:4000]
     title = job.get("title") or ""
 
@@ -65,7 +61,6 @@ def generate_recruiter_reply_draft(
 Language: {lang}
 Tone: {tone} (direct, no fluff, no clichés like "I hope this email finds you well").
 
-Candidate name: {name}
 Role discussed: {title}
 
 Job context (excerpt):
@@ -92,7 +87,7 @@ def generate_tailored_cover_letter(job: dict, language: str = "en") -> str:
     from armapply.cv_template import (
         NAME, EMAIL, PHONE, SUMMARY, SKILLS, EXPERIENCE, PROJECTS
     )
-    
+
     jd    = (job.get("full_description") or job.get("description") or "")[:5000]
     title = job.get("title") or "this role"
     company = job.get("site") or "your company"
