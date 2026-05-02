@@ -74,14 +74,18 @@ app.add_middleware(
 @app.on_event("startup")
 async def _startup() -> None:
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    init_app_db()
+    try:
+        init_app_db()
+        log.info("Database initialized successfully.")
+    except Exception as e:
+        log.error(f"Failed to initialize database on startup: {e}")
 
     # Seed test user if configured
     try:
         from armapply.dev_seed import maybe_seed_test_user
         maybe_seed_test_user()
-    except Exception:
-        pass
+    except Exception as e:
+        log.error(f"Failed to seed test user: {e}")
 
 
 @app.on_event("shutdown")
