@@ -43,13 +43,17 @@ def _conn() -> psycopg2.extensions.connection:
         host = parsed.hostname
         port = parsed.port
         
-        # Enforce Supabase pooler port if missing
-        if host and "pooler.supabase.com" in host and port is None:
-            port = 6543
+        # Enforce Supabase pooler port (6543) if using pooler host
+        if host and "pooler.supabase.com" in host:
+            if port is None or port == 5432:
+                port = 6543
+        
+        actual_port = port or 5432
+        log.info("Connecting to DB: host=%s port=%s", host, actual_port)
         
         _local.conn = psycopg2.connect(
             host=host,
-            port=port or 5432,
+            port=actual_port,
             dbname=parsed.path.lstrip("/"),
             user=parsed.username,
             password=unquote(parsed.password or ""),
