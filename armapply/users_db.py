@@ -55,41 +55,40 @@ def _conn() -> psycopg2.extensions.connection:
 
 
 def _exec(sql: str, params=(), fetch: str = "none"):
-    """Run a statement, reconnecting on stale connection."""
-    conn = _conn()
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        if fetch == "one":
-            row = cur.fetchone()
-            conn.commit()
-            return row
-        elif fetch == "all":
-            rows = cur.fetchall()
-            conn.commit()
-            return rows
-        else:
-            rowcount = cur.rowcount
-            conn.commit()
-            return rowcount
-    except psycopg2.OperationalError:
-        # stale connection — reset and retry once
-        _local.conn = None
+    """Run a statement, with retry logic for stale connections."""
+    for attempt in range(2):
         conn = _conn()
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        if fetch == "one":
-            row = cur.fetchone()
+        cur = None
+        try:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            if fetch == "one":
+                result = cur.fetchone()
+            elif fetch == "all":
+                result = cur.fetchall()
+            else:
+                result = cur.rowcount
             conn.commit()
-            return row
-        elif fetch == "all":
-            rows = cur.fetchall()
-            conn.commit()
-            return rows
-        else:
-            rowcount = cur.rowcount
-            conn.commit()
-            return rowcount
+            return result
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            if attempt == 0:
+                log.warning("DB connection stale, retrying: %s", e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                _local.conn = None
+                continue
+            raise
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            if cur:
+                cur.close()
 
 
 # ---------------------------------------------------------------------------
