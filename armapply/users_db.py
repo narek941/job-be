@@ -39,15 +39,22 @@ def _conn() -> psycopg2.extensions.connection:
         raw = _raw_db_url()
         # psycopg2 doesn't handle %-encoded passwords in URL — decode first
         parsed = urlparse(raw)
+        
+        host = parsed.hostname
+        port = parsed.port
+        
+        # Enforce Supabase pooler port if missing
+        if host and "pooler.supabase.com" in host and port is None:
+            port = 6543
+        
         _local.conn = psycopg2.connect(
-            host=parsed.hostname,
-            port=parsed.port or 5432,
+            host=host,
+            port=port or 5432,
             dbname=parsed.path.lstrip("/"),
             user=parsed.username,
             password=unquote(parsed.password or ""),
             sslmode="require",
-            sslrootcert="disable",  # required for Supabase pooler
-            connect_timeout=10,
+            connect_timeout=15,
             cursor_factory=psycopg2.extras.RealDictCursor,
         )
         _local.conn.autocommit = False
