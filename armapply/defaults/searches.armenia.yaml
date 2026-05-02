@@ -29,7 +29,7 @@ location_accept:
 
 location_reject_non_remote: []
 
-country: "ARM"
+country: "worldwide"
 
 sites:
   - linkedin

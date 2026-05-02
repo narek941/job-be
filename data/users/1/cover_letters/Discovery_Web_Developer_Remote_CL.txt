@@ -1,7 +1,0 @@
-Dear Hiring Manager,
-I built a headless Shopify storefront with optimized GraphQL queries for the RV Rental Platform, which solves the same problem your team is facing with high-traffic applications. This project used React, TypeScript, and GraphQL to serve thousands of products. I also developed custom checkout and campground booking features.
-
-My experience with React, TypeScript, and modern frontend architectures has allowed me to build scalable web applications with a focus on performance optimization and modular UI systems. For example, I shipped cross-platform React Native apps with BLE, health integrations, and OTA updates for 100+ brands using React, React Native, and Node.js. I also implemented GraphQL data layers and optimized data fetching for complex product UIs, resulting in 100% data accuracy.
-
-I noticed that Discovery uses Agile development methodologies, and I am familiar with working in similar environments. I'd like to discuss how my experience with Git, GitHub Actions, and CI/CD can help your team. 
-Narek

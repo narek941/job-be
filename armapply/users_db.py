@@ -22,10 +22,15 @@ def _raw_db_url() -> str:
     url = os.environ.get("DATABASE_URL", "")
     if url:
         return url
-    # Fallback: build from individual parts (using pooler for reliability on Render)
-    host = os.environ.get("SUPABASE_DB_HOST", "aws-1-eu-central-1.pooler.supabase.com")
-    user = os.environ.get("SUPABASE_DB_USER", "postgres.sgmbcveoxfkgcmfkvxuh")
-    password = os.environ.get("SUPABASE_DB_PASSWORD", "6%267%2CM9spJZmYrKe")
+    # Fallback: build from individual parts
+    host = os.environ.get("SUPABASE_DB_HOST", "")
+    user = os.environ.get("SUPABASE_DB_USER", "")
+    password = os.environ.get("SUPABASE_DB_PASSWORD", "")
+    if not (host and user and password):
+        raise RuntimeError(
+            "No DATABASE_URL or SUPABASE_DB_HOST/USER/PASSWORD configured. "
+            "Set DATABASE_URL env var."
+        )
     return f"postgresql://{user}:{password}@{host}:6543/postgres"
 
 
@@ -373,9 +378,23 @@ def get_job_by_url(user_id: int, url: str) -> dict | None:
     return dict(row) if row else None
 
 
+# Whitelist of columns that can be updated via update_job_field
+_ALLOWED_JOB_FIELDS = {
+    "fit_score", "score_reasoning", "scored_at",
+    "tailored_resume_text", "tailored_at", "tailor_attempts",
+    "cover_letter_text", "cover_letter_at", "cover_attempts",
+    "full_description", "detail_scraped_at", "detail_error",
+    "application_url", "application_email",
+    "applied_at", "apply_status", "apply_error", "apply_attempts",
+    "agent_id", "last_attempted_at", "apply_duration_ms",
+    "apply_task_id", "verification_confidence",
+}
+
+
 def update_job_field(user_id: int, url: str, field: str, value: Any) -> None:
     init_app_db()
-    # Be careful with dynamic field names in real production, but here we control 'field'
+    if field not in _ALLOWED_JOB_FIELDS:
+        raise ValueError(f"Field '{field}' is not in the allowed whitelist")
     _exec(f"UPDATE jobs SET {field} = %s WHERE user_id = %s AND url = %s", (value, user_id, url))
 
 
@@ -452,7 +471,12 @@ def save_user_resume(user_id: int, text: str) -> None:
 
 
 def get_users_with_autopilot() -> list[dict]:
-    """Fetch all users that have autopilot enabled in their preferences."""
+    """Fetch all users that have autopilot enabled OR have a search_config set.
+
+    A user is considered 'active' for the daily pipeline if:
+    - auto_pilot is explicitly True in preferences, OR
+    - they have a search_config saved (meaning they've configured job search)
+    """
     init_app_db()
     rows = _exec("SELECT * FROM users", fetch="all")
     if not rows:
@@ -463,7 +487,9 @@ def get_users_with_autopilot() -> list[dict]:
             prefs = json.loads(row.get("preferences_json") or "{}")
         except json.JSONDecodeError:
             prefs = {}
-        if prefs.get("auto_pilot", False):
+        has_autopilot = prefs.get("auto_pilot", False)
+        has_search_config = bool(prefs.get("search_config"))
+        if has_autopilot or has_search_config:
             row_dict = dict(row)
             row_dict["prefs"] = prefs
             active.append(row_dict)

@@ -213,7 +213,7 @@ async def cover_letter_ep(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    cover_letter = generate_tailored_cover_letter(dict(job))
+    cover_letter = generate_tailored_cover_letter(dict(job), user_id=uid)
 
     # Save to database
     from datetime import datetime, timezone
@@ -241,7 +241,7 @@ async def tailor_resume_ep(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    resume_text = generate_tailored_resume_text(dict(job))
+    resume_text = generate_tailored_resume_text(dict(job), user_id=uid)
 
     # Save to database
     from datetime import datetime, timezone
@@ -364,6 +364,21 @@ async def upload_resume_pdf(user: User, file: UploadFile = File(...)) -> dict[st
                 if t:
                     parts.append(t)
         text = "\n\n".join(parts)
+        
+        # Fallback to OCR if text is empty or very short
+        if len(text.strip()) < 50:
+            import pytesseract
+            from pdf2image import convert_from_bytes
+            images = convert_from_bytes(data)
+            ocr_parts = []
+            for img in images:
+                ocr_text = pytesseract.image_to_string(img)
+                if ocr_text:
+                    ocr_parts.append(ocr_text)
+            ocr_full = "\n\n".join(ocr_parts)
+            if len(ocr_full.strip()) > len(text.strip()):
+                text = ocr_full
+
     except Exception as e:
         text = f"[PDF uploaded — text extraction failed]\nError: {e}"
 

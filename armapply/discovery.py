@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import urljoin, urlparse, unquote, parse_qs, urlencode, urlunparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -23,6 +23,27 @@ UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
+
+def clean_job_url(url: str) -> str:
+    """Remove common tracking parameters from a job URL."""
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+        if not parsed.query:
+            return url
+        qs = parse_qs(parsed.query, keep_blank_values=True)
+        strip_params = {
+            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+            "refId", "trackingId", "trk", "position", "pageNum", "f_C", "f_TPR",
+            "currentJobId", "eBP", "sid", "original_referer"
+        }
+        filtered_qs = {k: v for k, v in qs.items() if k not in strip_params}
+        new_query = urlencode(filtered_qs, doseq=True)
+        return urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        return url
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -250,7 +271,7 @@ def scrape_jobspy(
                     continue
 
             for _, row in df.iterrows():
-                url = str(row.get("job_url", ""))
+                url = clean_job_url(str(row.get("job_url", "")))
                 if not url or url == "nan" or url in seen_urls:
                     continue
                 seen_urls.add(url)

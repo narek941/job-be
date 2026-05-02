@@ -82,32 +82,33 @@ Rules:
     )
 
 
-def generate_tailored_cover_letter(job: dict, language: str = "en") -> str:
-    """Generates a warm, human-sounding cover letter based on Narek's real CV."""
-    from armapply.cv_template import (
-        NAME, EMAIL, PHONE, SUMMARY, SKILLS, EXPERIENCE, PROJECTS
-    )
+def _get_user_resume_text(user_id: int | None) -> str:
+    """Load the user's resume from DB; fall back to cv_template if none."""
+    if user_id is not None:
+        from armapply.users_db import get_user_resume
+        resume = get_user_resume(user_id)
+        if resume and len(resume.strip()) > 50:
+            return resume
+    # Fallback: hardcoded CV template
+    from armapply.cv_template import render_cv_text
+    return render_cv_text()
+
+
+def generate_tailored_cover_letter(job: dict, language: str = "en", user_id: int | None = None) -> str:
+    """Generates a warm, human-sounding cover letter based on the user's resume.
+
+    If user_id is provided, loads their resume from the database.
+    Falls back to the default CV template if no resume is found.
+    """
+    resume_text = _get_user_resume_text(user_id)
 
     jd    = (job.get("full_description") or job.get("description") or "")[:5000]
     title = job.get("title") or "this role"
     company = job.get("site") or "your company"
 
-    # Build experience bullet summary for the prompt
-    exp_text = "\n".join(
-        f"- {e['role']} at {e['company']} ({e['period']}): " + "; ".join(e["bullets"][:3])
-        for e in EXPERIENCE
-    )
-    project_text = "\n".join(
-        f"- {p[0]}: {p[1]}.  {p[2]}"
-        for p in PROJECTS[:4]
-    )
-    skills_flat = ", ".join(
-        s for items in SKILLS.values() for s in items[:3]
-    )
-
     lang_note = "Write in Armenian (Eastern Armenian, professional tone)." if language.startswith("hy") else "Write in English."
 
-    prompt = f"""You are writing a cover letter AS Narek Kolyan (first person, "I").
+    prompt = f"""You are writing a cover letter for the candidate below (first person, "I").
 {lang_note}
 
 TONE RULES — extremely important:
@@ -118,17 +119,8 @@ TONE RULES — extremely important:
 - Be direct and warm. 180–220 words max. Do not use bullet points.
 - FIRST sentence must hook immediately — who you are + one concrete achievement relevant to the role.
 
-CANDIDATE PROFILE:
-  Name: {NAME}
-  Phone: {PHONE}  Email: {EMAIL}
-  Summary: {SUMMARY}
-  Core skills: {skills_flat}
-
-EXPERIENCE:
-{exp_text}
-
-SELECTED PROJECTS:
-{project_text}
+CANDIDATE RESUME:
+{resume_text[:6000]}
 
 ROLE APPLYING TO: {title} at {company}
 
@@ -136,9 +128,9 @@ JOB DESCRIPTION (excerpt):
 {jd}
 
 STRUCTURE (follow exactly):
-1. Opening (1 sentence) — who Narek is + one concrete number/achievement that is relevant to this JD.
+1. Opening (1 sentence) — who the candidate is + one concrete number/achievement that is relevant to this JD.
 2. Body paragraph 1 — most relevant past project or role (be specific: tech stack, scale, outcome).
-3. Body paragraph 2 — what appeals to him about this specific role/company (reference something real from the JD).
+3. Body paragraph 2 — what appeals to the candidate about this specific role/company (reference something real from the JD).
 4. Closing (2 sentences) — express readiness to talk, no fluff.
 
 Output ONLY the letter body (no subject line, no signature block)."""
@@ -150,16 +142,12 @@ Output ONLY the letter body (no subject line, no signature block)."""
         temperature=0.7,
     )
 
-def generate_tailored_resume_text(job: dict) -> str:
+def generate_tailored_resume_text(job: dict, user_id: int | None = None) -> str:
     """
-    Returns the standard plain-text CV version.
-    CV tailoring is disabled by user request to always use the same CV.
+    Returns the user's resume text.
+    If user has a resume in DB, returns that. Otherwise falls back to cv_template.
     """
-    from armapply.cv_template import render_cv_text
-    
-    # We no longer use an LLM or highlight specific skills.
-    # Return the static CV identically every time.
-    return render_cv_text()
+    return _get_user_resume_text(user_id)
 
 def extract_profile_from_resume(resume_text: str) -> dict:
     """Uses LLM to extract structured data from a raw resume text."""

@@ -56,7 +56,7 @@ def run_pipeline_for_user(user_id: int) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         for row in (rows or []):
             try:
-                cover = generate_tailored_cover_letter(dict(row))
+                cover = generate_tailored_cover_letter(dict(row), user_id=user_id)
                 update_job_field(user_id, row["url"], "cover_letter_text", cover)
                 update_job_field(user_id, row["url"], "cover_letter_at", now)
                 result["covers"] += 1
@@ -97,7 +97,7 @@ def run_pipeline_for_user(user_id: int) -> dict:
             # Daily summary
             stats = _exec(
                 "SELECT "
-                "COUNT(*) FILTER (WHERE discovered_at > NOW() - INTERVAL '24 hours') as new_today, "
+                "COUNT(*) FILTER (WHERE discovered_at::timestamp > NOW() - INTERVAL '24 hours') as new_today, "
                 "COUNT(*) FILTER (WHERE fit_score >= 7) as high_scoring, "
                 "COUNT(*) as total "
                 "FROM jobs WHERE user_id = %s",

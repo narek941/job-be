@@ -1,7 +1,0 @@
-Dear Hiring Manager,
-I built a headless Shopify storefront for an RV rental platform, which served thousands of products with optimized GraphQL queries. This project solved the problem of slow data fetching and improved the overall user experience. I also developed a mobile e-commerce solution, which included cross-platform React Native apps for 100+ brands, improving UI performance and custom backend integration.
-
-In my previous role, I implemented GraphQL data layers and optimized data fetching for complex product and analytics UIs, resulting in improved performance. I also built maintainable, modular code for sports AI models, which improved data accuracy to 100% for sports data and analytics. Additionally, I shipped scalable frontend systems for high-traffic applications, ensuring a seamless user experience.
-
-I'm interested in Discovery's remote-friendly position and the opportunity to work with a team that values Agile development. I'd like to discuss how my experience with React, TypeScript, and Node.js can contribute to the company's goals. Let's discuss. 
-Narek
