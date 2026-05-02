@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import json
+import logging
 import os
 import threading
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ from urllib.parse import urlparse, unquote
 
 import psycopg2
 import psycopg2.extras
+
+log = logging.getLogger(__name__)
 
 _local = threading.local()
 
