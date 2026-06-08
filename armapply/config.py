@@ -56,7 +56,7 @@ class Settings:
         return cls(
             database_url=_env_required("DATABASE_URL"),
             gemini_api_key=_env_required("GEMINI_API_KEY"),
-            gemini_model=_env("GEMINI_MODEL", "gemini-2.0-flash"),
+            gemini_model=_env("GEMINI_MODEL", "gemini-2.5-flash"),
             telegram_bot_token=_env_required("TELEGRAM_BOT_TOKEN"),
             telegram_webhook_secret=_env("TELEGRAM_WEBHOOK_SECRET", ""),
             pipeline_secret=_env_required("PIPELINE_SECRET"),
