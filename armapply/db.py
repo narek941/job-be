@@ -39,6 +39,7 @@ class User(TypedDict):
     id: int
     tg_chat_id: int
     email: str | None
+    name: str | None
     cv_text: str | None
     cv_pdf: bytes | None
     cv_pdf_filename: str | None
@@ -271,6 +272,12 @@ _MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        2,
+        # Candidate's display name — passed into LLM prompts so it can't be
+        # mistaken for a previous employer. NULL until the user runs /name.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;",
+    ),
 ]
 
 
@@ -337,6 +344,7 @@ def create_user(tg_chat_id: int) -> User:
 _USER_UPDATABLE = frozenset(
     {
         "email",
+        "name",
         "cv_text",
         "cv_pdf",
         "cv_pdf_filename",

@@ -46,7 +46,11 @@ def _score_new_jobs(user: db.User) -> int:
             db.update_job(job["id"], status="muted")
             continue
         try:
-            res = match.score_job(cv, job, home_locations=user["locations"])
+            res = match.score_job(
+                cv, job,
+                candidate_name=user["name"],
+                home_locations=user["locations"],
+            )
         except Exception as e:
             log.warning("score failed user=%d job=%d: %s", user["id"], job["id"], e)
             db.update_job(job["id"], status="failed", apply_error=f"score: {e}"[:500])
@@ -59,15 +63,16 @@ def _score_new_jobs(user: db.User) -> int:
 def _generate_for_match(user: db.User, job: db.Job) -> db.Job:
     """Ensure cover_letter + cv_tweaks exist on the job. Returns the refreshed row."""
     cv = user["cv_text"] or ""
+    name = user["name"]
     updates: dict[str, object] = {}
     if not job["cover_letter"]:
         try:
-            updates["cover_letter"] = match.cover_letter(cv, job)
+            updates["cover_letter"] = match.cover_letter(cv, job, candidate_name=name)
         except Exception as e:
             log.warning("cover_letter failed job=%d: %s", job["id"], e)
     if not job["cv_tweaks"]:
         try:
-            tweaks = match.cv_tweaks(cv, job)
+            tweaks = match.cv_tweaks(cv, job, candidate_name=name)
             updates["cv_tweaks"] = dict(tweaks)
         except Exception as e:
             log.warning("cv_tweaks failed job=%d: %s", job["id"], e)

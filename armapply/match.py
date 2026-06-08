@@ -90,14 +90,18 @@ _SCORE_SYSTEM = (
 )
 
 
-def score_job(cv: str, job: db.Job, home_locations: list[str] | None = None) -> ScoreResult:
-    """Returns a 1-10 fit score plus a short reason.
-
-    `home_locations` is a free-form list like ['Yerevan', 'Armenia', 'Remote'];
-    passed to the LLM so it can weight location correctly.
-    """
+def score_job(
+    cv: str,
+    job: db.Job,
+    *,
+    candidate_name: str | None = None,
+    home_locations: list[str] | None = None,
+) -> ScoreResult:
+    """Returns a 1-10 fit score plus a short reason."""
     locations_line = ", ".join(home_locations) if home_locations else "Remote-friendly"
+    name_line = f"Candidate's name: {candidate_name}\n" if candidate_name else ""
     user_prompt = (
+        f"{name_line}"
         f"Candidate's preferred locations: {locations_line}\n\n"
         f"CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}"
     )
@@ -117,20 +121,26 @@ def score_job(cv: str, job: db.Job, home_locations: list[str] | None = None) -> 
 
 _COVER_SYSTEM = (
     "You are the candidate. Write a short, sincere cover letter (4-6 short "
-    "paragraphs, 180-280 words total) for the role below. Anchor every claim "
-    "in the CV — do not invent experience. No fluff, no hyperbole, no emojis. "
-    "Start with the role and one specific reason it interests you. End with a "
-    "single concrete call to action. Output plain text only."
+    "paragraphs, 180-260 words total) for the role below. Anchor every claim "
+    "in the CV — do not invent experience or invent employers. No fluff, no "
+    "hyperbole, no emojis. Start with the role and one specific reason it "
+    "interests you. End with a single concrete call to action. Output plain "
+    "text only — no markdown, no headers, no labels.\n\n"
+    "IMPORTANT: The candidate's full name will be given to you explicitly. "
+    "Words that look like the name are NOT a company — never write 'at "
+    "<name>' as if it were an employer. Use only employer names that appear "
+    "in the CV's work-experience entries."
 )
 
 
-def cover_letter(cv: str, job: db.Job) -> str:
+def cover_letter(cv: str, job: db.Job, *, candidate_name: str | None = None) -> str:
     """Returns a cover-letter body suitable for email."""
+    name_line = f"Candidate's name: {candidate_name}\n\n" if candidate_name else ""
     text = llm.complete(
         system=_COVER_SYSTEM,
-        user=f"CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}",
+        user=f"{name_line}CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}",
         temperature=0.4,
-        max_tokens=700,
+        max_tokens=1500,
     )
     return text.strip()
 
@@ -146,13 +156,14 @@ _TWEAKS_SYSTEM = (
 )
 
 
-def cv_tweaks(cv: str, job: db.Job) -> CvTweaks:
+def cv_tweaks(cv: str, job: db.Job, *, candidate_name: str | None = None) -> CvTweaks:
     """Returns minimal CV edits — bullets to add + optional summary rewrite."""
+    name_line = f"Candidate's name: {candidate_name}\n\n" if candidate_name else ""
     data = llm.complete_json(
         system=_TWEAKS_SYSTEM,
-        user=f"CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}",
+        user=f"{name_line}CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}",
         temperature=0.3,
-        max_tokens=600,
+        max_tokens=1024,
     )
     if not isinstance(data, dict):
         raise llm.LLMError(f"cv_tweaks: expected object, got {type(data).__name__}")

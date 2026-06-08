@@ -153,6 +153,7 @@ def handle_update(update: dict[str, Any]) -> None:
 _HELP = (
     "*ArmApply* — Armenia-first job hunter.\n\n"
     "Send me a PDF résumé to start. Then:\n"
+    "  `/name Narek Kolyan`  (your name — used in cover letters)\n"
     "  `/queries python, backend, fastapi`\n"
     "  `/locations Yerevan, Remote`\n"
     "  `/channels @armjobs @yerevan_jobs`\n"
@@ -201,6 +202,16 @@ class CommandError(Exception):
 
 def _cmd_start(user: db.User, _rest: str) -> None:
     telegram_api.send_message(user["tg_chat_id"], _HELP)
+
+
+def _cmd_name(user: db.User, rest: str) -> None:
+    name = rest.strip()
+    if not name:
+        raise CommandError("Usage: /name Narek Kolyan")
+    if len(name) > 120:
+        raise CommandError("Name too long (max 120 chars).")
+    db.update_user(user["id"], name=name)
+    telegram_api.send_message(user["tg_chat_id"], f"✅ Name: {name}")
 
 
 def _cmd_queries(user: db.User, rest: str) -> None:
@@ -260,6 +271,7 @@ def _cmd_me(user: db.User, _rest: str) -> None:
     assert fresh is not None
     lines = [
         f"*Your settings*",
+        f"Name: {fresh['name'] or '— set with /name'}",
         f"CV: {'✅ loaded' if fresh['cv_text'] else '❌ missing — send a PDF'}",
         f"Queries: {', '.join(fresh['queries']) or '—'}",
         f"Locations: {', '.join(fresh['locations']) or '—'}",
@@ -293,6 +305,7 @@ def _cmd_run(user: db.User, _rest: str) -> None:
 _COMMANDS = {
     "/start": _cmd_start,
     "/help": _cmd_start,
+    "/name": _cmd_name,
     "/queries": _cmd_queries,
     "/locations": _cmd_locations,
     "/channels": _cmd_channels,
