@@ -86,7 +86,7 @@ def score_job(cv: str, job: db.Job) -> ScoreResult:
         system=_SCORE_SYSTEM,
         user=f"CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}",
         temperature=0.1,
-        max_tokens=300,
+        max_tokens=512,
     )
     if not isinstance(data, dict):
         raise llm.LLMError(f"score_job: expected object, got {type(data).__name__}")

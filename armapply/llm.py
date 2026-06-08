@@ -56,6 +56,11 @@ def _call(
         "generationConfig": {
             "temperature": temperature,
             "maxOutputTokens": max_tokens,
+            # Gemini 2.5 Flash burns "thinking" tokens before producing
+            # visible output. For our scoring + drafting workloads that's
+            # pure overhead — disable it so the whole budget is available
+            # for the actual response.
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
     if json_mode:
