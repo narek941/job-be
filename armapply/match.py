@@ -72,19 +72,38 @@ def _clamp_score(value: Any) -> int:
 # ---------------------------------------------------------------------------
 
 _SCORE_SYSTEM = (
-    "You are a senior technical recruiter. Score how well the candidate's CV "
-    "matches the job listing on a scale 1-10. 10 = excellent fit; 1 = wrong field. "
-    "Penalize mismatched seniority, missing required tech, wrong domain. "
-    "Be honest — most jobs are 4-7. Output strict JSON with keys 'score' (int 1-10) "
-    "and 'reason' (one short sentence, max 200 chars)."
+    "You are a senior technical recruiter scoring how well a candidate fits "
+    "a job listing. Output strict JSON with keys 'score' (int 1-10) and "
+    "'reason' (one short sentence, max 200 chars).\n\n"
+    "Scoring rules:\n"
+    "  10 = excellent technical fit AND great location match.\n"
+    "  8-9 = strong tech fit, location works (remote OR in/near candidate's home).\n"
+    "  6-7 = decent tech fit but some friction (e.g. would require relocation, "
+    "        seniority slightly off).\n"
+    "  4-5 = partial overlap; many key skills missing or wrong domain.\n"
+    "  1-3 = wrong field, wrong seniority, or job requires relocating away "
+    "        from the candidate's preferred locations without being remote.\n\n"
+    "Location is a HARD signal: a job in another country that isn't remote "
+    "should never score above 6, no matter how strong the tech match. A job "
+    "in the candidate's home country or fully remote keeps the location "
+    "ceiling open."
 )
 
 
-def score_job(cv: str, job: db.Job) -> ScoreResult:
-    """Returns a 1-10 fit score plus a short reason."""
+def score_job(cv: str, job: db.Job, home_locations: list[str] | None = None) -> ScoreResult:
+    """Returns a 1-10 fit score plus a short reason.
+
+    `home_locations` is a free-form list like ['Yerevan', 'Armenia', 'Remote'];
+    passed to the LLM so it can weight location correctly.
+    """
+    locations_line = ", ".join(home_locations) if home_locations else "Remote-friendly"
+    user_prompt = (
+        f"Candidate's preferred locations: {locations_line}\n\n"
+        f"CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}"
+    )
     data = llm.complete_json(
         system=_SCORE_SYSTEM,
-        user=f"CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}",
+        user=user_prompt,
         temperature=0.1,
         max_tokens=512,
     )

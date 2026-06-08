@@ -85,6 +85,33 @@ def extract_email(text: str | None) -> str | None:
 STAFFAM_BASE = "https://staff.am/en/jobs"
 STAFFAM_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
+# Title fragments for obviously non-tech jobs. Used to drop listings before
+# we spend LLM budget on them. Case-insensitive substring match.
+_NON_TECH_TITLE_HINTS = (
+    "accountant", "tax ", "auditor", "bookkeep", "cashier", "teller",
+    "lawyer", "attorney", "legal counsel", "notary",
+    "barista", "waiter", "waitress", "cook ", "chef", "cleaner", "janitor",
+    "driver", "courier", "warehouse", "guard", "security officer",
+    "sales manager", "sales agent", "sales representative", "salesperson",
+    "retail ", "store ", "shop assistant", "merchandiser",
+    "smm ", "marketing assistant", "brand manager", "copywriter",
+    "hr ", "recruiter", "human resources",
+    "doctor", "nurse", "pharmacist", "dentist",
+    "teacher", "tutor", "trainer ",
+    "operator", "consultant ",  # bank operator, financial consultant, etc.
+    "loan ", "credit specialist", "underwriter",
+    "գանձապահ", "վաճառող", "օպերատոր",  # cashier, salesperson, operator in Armenian
+)
+
+
+def _looks_non_tech(title: str) -> bool:
+    """Return True for jobs whose titles obviously don't match a tech role.
+    Used to skip enrichment + scoring without an LLM call."""
+    if not title:
+        return False
+    low = title.lower()
+    return any(hint in low for hint in _NON_TECH_TITLE_HINTS)
+
 
 def _staffam_url_ok(href: str) -> str | None:
     if not href or href.startswith("#"):
@@ -118,13 +145,12 @@ def _staffam_parse_card(card) -> tuple[str | None, str | None]:
     return company, location or "Armenia"
 
 
-def _staffam_list_page(client: httpx.Client, query: str, page: int) -> list[RawJob]:
-    params: dict[str, str] = {}
-    if query:
-        params["search"] = query
-    if page > 1:
-        params["page"] = str(page)
-    r = client.get(STAFFAM_BASE, params=params or None)
+def _staffam_list_page(client: httpx.Client, page: int) -> list[RawJob]:
+    # NOTE: staff.am's `?search=` param is a no-op for guest requests — the
+    # category UI is JS-only. We just fetch the firehose and filter by title
+    # keywords later. Cheaper and more accurate than guessing search terms.
+    params = {"page": str(page)} if page > 1 else None
+    r = client.get(STAFFAM_BASE, params=params)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -171,28 +197,38 @@ def _staffam_enrich(client: httpx.Client, job: RawJob) -> RawJob:
     return {**job, "description": description, "recruiter_email": extract_email(description)}
 
 
-def discover_staffam(queries: Iterable[str], *, max_pages: int = 2, enrich_top: int = 30) -> list[RawJob]:
-    """Scrape staff.am listings for each query, then enrich the first `enrich_top`."""
-    queries = list(queries) or [""]
+def discover_staffam(_queries: Iterable[str], *, max_pages: int = 5, enrich_top: int = 30) -> list[RawJob]:
+    """Scrape the staff.am job firehose and drop obvious non-tech listings.
+
+    `_queries` is unused — staff.am's `?search=` is a no-op for guests, so
+    we walk the main feed and filter by title heuristics. Kept in the
+    signature so callers (and the orchestrator) don't need to change.
+    """
     listings: dict[str, RawJob] = {}  # url -> job
     headers = {"User-Agent": USER_AGENT}
+    skipped_non_tech = 0
     with httpx.Client(timeout=STAFFAM_TIMEOUT, headers=headers, follow_redirects=True) as client:
-        for q in queries:
-            for page in range(1, max_pages + 1):
-                try:
-                    page_jobs = _staffam_list_page(client, q, page)
-                except httpx.HTTPError as e:
-                    log.warning("staff.am list page %d for %r failed: %s", page, q, e)
-                    break
-                if not page_jobs:
-                    break
-                for j in page_jobs:
-                    listings.setdefault(j["url"], j)
-        # Enrichment — only the first N to keep the wall time bounded.
+        for page in range(1, max_pages + 1):
+            try:
+                page_jobs = _staffam_list_page(client, page)
+            except httpx.HTTPError as e:
+                log.warning("staff.am page %d failed: %s", page, e)
+                break
+            if not page_jobs:
+                break
+            for j in page_jobs:
+                if _looks_non_tech(j["title"]):
+                    skipped_non_tech += 1
+                    continue
+                listings.setdefault(j["url"], j)
+
         to_enrich = list(listings.values())[:enrich_top]
         for j in to_enrich:
             listings[j["url"]] = _staffam_enrich(client, j)
-    log.info("staff.am: %d listings discovered (%d enriched)", len(listings), len(to_enrich))
+    log.info(
+        "staff.am: %d candidate listings (%d enriched, %d non-tech skipped)",
+        len(listings), len(to_enrich), skipped_non_tech,
+    )
     return list(listings.values())
 
 

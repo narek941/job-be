@@ -46,7 +46,7 @@ def _score_new_jobs(user: db.User) -> int:
             db.update_job(job["id"], status="muted")
             continue
         try:
-            res = match.score_job(cv, job)
+            res = match.score_job(cv, job, home_locations=user["locations"])
         except Exception as e:
             log.warning("score failed user=%d job=%d: %s", user["id"], job["id"], e)
             db.update_job(job["id"], status="failed", apply_error=f"score: {e}"[:500])
