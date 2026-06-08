@@ -133,6 +133,7 @@ def notify_match(user: db.User, job: db.Job) -> None:
         user["tg_chat_id"],
         _match_message(job),
         reply_markup=_match_keyboard(job),
+        parse_mode="Markdown",
     )
 
 
@@ -400,8 +401,9 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         telegram_api.answer_callback(cb.callback_id, "Application queued.")
         telegram_api.edit_message_text(
             cb.chat_id, cb.message_id,
-            _match_message(job) + f"\n\n✅ *Applied* — to `{result.to_email}`",
+            _match_message(job) + f"\n\n✅ *Applied* — to `{_md_escape(result.to_email or '')}`",
             reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
+            parse_mode="Markdown",
         )
     else:
         telegram_api.answer_callback(cb.callback_id, "No recruiter email — open the link.")
@@ -409,6 +411,7 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
             cb.chat_id, cb.message_id,
             _match_message(job) + "\n\n🔗 *Apply manually* — see the link above.",
             reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
+            parse_mode="Markdown",
         )
 
 
@@ -418,6 +421,7 @@ def _cb_skip(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     telegram_api.edit_message_text(
         cb.chat_id, cb.message_id, _match_message(job) + "\n\n⏭ *Skipped*",
         reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
+        parse_mode="Markdown",
     )
 
 
@@ -433,8 +437,9 @@ def _cb_mute(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     db.update_job(job["id"], status="muted")
     telegram_api.answer_callback(cb.callback_id, f"Muted {company}.")
     telegram_api.edit_message_text(
-        cb.chat_id, cb.message_id, _match_message(job) + f"\n\n🔕 *{company} muted*",
+        cb.chat_id, cb.message_id, _match_message(job) + f"\n\n🔕 *{_md_escape(company)} muted*",
         reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
+        parse_mode="Markdown",
     )
 
 

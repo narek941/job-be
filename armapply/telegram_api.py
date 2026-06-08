@@ -44,7 +44,7 @@ def send_message(
     text: str,
     *,
     reply_markup: dict[str, Any] | None = None,
-    parse_mode: str | None = "Markdown",
+    parse_mode: str | None = None,
     disable_web_page_preview: bool = True,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -65,7 +65,7 @@ def edit_message_text(
     text: str,
     *,
     reply_markup: dict[str, Any] | None = None,
-    parse_mode: str | None = "Markdown",
+    parse_mode: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "chat_id": chat_id,
