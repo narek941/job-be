@@ -153,7 +153,12 @@ def cv_tweaks(cv: str, job: db.Job) -> CvTweaks:
 # ---------------------------------------------------------------------------
 
 def extract_cv_text(pdf_bytes: bytes) -> str:
-    """Best-effort PDF → text. Falls back to OCR for image-only PDFs."""
+    """Best-effort PDF → text.
+
+    Try pdfplumber first (fast, no extra memory). If it returns almost
+    nothing (image-only/scanned PDF), fall back to OCR — but page-by-page
+    at 100 DPI and capped at 5 pages so we don't OOM on a 512 MB worker.
+    """
     try:
         import io
         import pdfplumber
@@ -169,20 +174,38 @@ def extract_cv_text(pdf_bytes: bytes) -> str:
         log.warning("pdfplumber extraction failed: %s", e)
         text = ""
 
-    if len(text) >= 50:
+    # Skip OCR if pdfplumber already got something useful — OCR is expensive
+    # and only needed for image-only PDFs.
+    if len(text) >= 200:
         return text
 
-    # OCR fallback for scanned PDFs.
     try:
         import pdf2image  # type: ignore[import-not-found]
         import pytesseract  # type: ignore[import-not-found]
+    except ImportError:
+        log.info("OCR deps not installed; returning pdfplumber output")
+        return text
 
-        ocr_parts: list[str] = []
-        for image in pdf2image.convert_from_bytes(pdf_bytes):
-            ocr_parts.append(pytesseract.image_to_string(image))
-        ocr_text = "\n\n".join(p for p in ocr_parts if p).strip()
-        if len(ocr_text) > len(text):
-            return ocr_text
+    ocr_parts: list[str] = []
+    try:
+        # Probe page count cheaply via pdfinfo (poppler), capped to 5 pages.
+        info = pdf2image.pdfinfo_from_bytes(pdf_bytes)
+        total_pages = min(int(info.get("Pages", 1)), 5)
+        for page_num in range(1, total_pages + 1):
+            images = pdf2image.convert_from_bytes(
+                pdf_bytes,
+                dpi=100,
+                first_page=page_num,
+                last_page=page_num,
+                fmt="jpeg",
+            )
+            if not images:
+                continue
+            ocr_parts.append(pytesseract.image_to_string(images[0]))
+            # Release the PIL image before the next iteration so RSS stays flat.
+            images[0].close()
     except Exception as e:
         log.warning("OCR fallback failed: %s", e)
-    return text
+
+    ocr_text = "\n\n".join(p for p in ocr_parts if p).strip()
+    return ocr_text if len(ocr_text) > len(text) else text

@@ -57,10 +57,17 @@ async def telegram_webhook(
 ) -> dict[str, str]:
     _verify_telegram_secret(x_telegram_bot_api_secret_token)
     update: dict[str, Any] = await request.json()
-    try:
-        bot.handle_update(update)
-    except Exception:
-        log.exception("update handler failed: %s", update)
+
+    # Ack Telegram immediately — anything slow (CV extraction, /run) happens
+    # in a worker thread so the webhook never times out and Telegram never
+    # retries (which would otherwise re-trigger the same OOM-prone work).
+    def _process() -> None:
+        try:
+            bot.handle_update(update)
+        except Exception:
+            log.exception("update handler failed: %s", update)
+
+    threading.Thread(target=_process, daemon=True).start()
     return {"ok": "true"}
 
 
