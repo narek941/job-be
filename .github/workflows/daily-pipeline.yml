@@ -40,6 +40,13 @@ jobs:
           echo "❌ Service did not become healthy in time"
           exit 1
 
+      - name: Debug secret integrity
+        shell: bash
+        env:
+          SECRET: ${{ secrets.PIPELINE_SECRET }}
+        run: |
+          printf "len=%d sha=%s\n" "${#SECRET}" "$(printf '%s' "$SECRET" | sha256sum | cut -c1-12)"
+
       - name: Trigger daily pipeline
         shell: bash
         run: |
