@@ -94,7 +94,10 @@ def _match_message(job: db.Job) -> str:
     score = job["score"] or 0
     reason = _md_escape((job["reason"] or "").strip())
     cover = (job["cover_letter"] or "").strip()
-    cover_preview = cover if len(cover) <= 800 else cover[:800] + "…"
+    # Telegram's hard limit is 4096; the rest of the card uses ~400 chars,
+    # so 3500 leaves a safety margin and fits virtually every cover letter
+    # the LLM produces (cover_letter() asks for 180-260 words ≈ 1500 chars).
+    cover_preview = cover if len(cover) <= 3500 else cover[:3500] + "…"
     email_line = (
         f"\n📧 Recruiter: `{_md_escape(job['recruiter_email'])}`"
         if job["recruiter_email"]
