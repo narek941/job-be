@@ -155,14 +155,16 @@ _HELP = (
     "*ArmApply* — Armenia-first job hunter.\n\n"
     "Send me a PDF résumé to start. Then:\n"
     "  `/name Narek Kolyan`  (your name — used in cover letters)\n"
-    "  `/queries python, backend, fastapi`\n"
+    "  `/email you@gmail.com`  (Reply-To address for apply emails)\n"
+    "  `/cv`  show CV info / `/cv preview` show first lines\n"
+    "  `/queries frontend, react, node`\n"
     "  `/locations Yerevan, Remote`\n"
-    "  `/channels @armjobs @yerevan_jobs`\n"
+    "  `/channels senior_frontender easy_frontend_jobs`\n"
     "  `/worldwide 0.1`  (share of worldwide jobs)\n"
     "  `/auto on` or `/auto off`  (auto-apply when score ≥ threshold)\n"
     "  `/pause` / `/resume`\n"
     "  `/me`  show settings\n"
-    "  `/run` run the daily pipeline now\n"
+    "  `/run`  run the pipeline now\n"
 )
 
 
@@ -203,6 +205,46 @@ class CommandError(Exception):
 
 def _cmd_start(user: db.User, _rest: str) -> None:
     telegram_api.send_message(user["tg_chat_id"], _HELP)
+
+
+def _cmd_email(user: db.User, rest: str) -> None:
+    addr = rest.strip().lower()
+    if not addr or "@" not in addr or " " in addr:
+        raise CommandError("Usage: /email you@example.com  (used as Reply-To on apply emails)")
+    db.update_user(user["id"], email=addr)
+    telegram_api.send_message(user["tg_chat_id"], f"✅ Email: {addr}")
+
+
+def _cmd_cv(user: db.User, rest: str) -> None:
+    """`/cv` — show stored CV info.  `/cv preview` — first 800 chars."""
+    fresh = db.get_user(user["id"])
+    assert fresh is not None
+    text = fresh["cv_text"] or ""
+    if not text:
+        telegram_api.send_message(
+            user["tg_chat_id"],
+            "❌ No CV stored yet. Send me a PDF and I'll extract the text.",
+        )
+        return
+
+    if rest.strip().lower() == "preview":
+        snippet = text[:800] + ("…" if len(text) > 800 else "")
+        telegram_api.send_message(user["tg_chat_id"], snippet)
+        return
+
+    pdf_size = len(fresh["cv_pdf"]) if fresh["cv_pdf"] else 0
+    updated = fresh["updated_at"].strftime("%Y-%m-%d %H:%M UTC") if fresh["updated_at"] else "—"
+    lines = [
+        "📄 CV info",
+        f"Filename: {fresh['cv_pdf_filename'] or '—'}",
+        f"Extracted text: {len(text):,} chars",
+        f"PDF size: {pdf_size:,} bytes",
+        f"Updated: {updated}",
+        "",
+        "Replace it: send a new PDF (or paste-friendly).",
+        "Preview the first lines: /cv preview",
+    ]
+    telegram_api.send_message(user["tg_chat_id"], "\n".join(lines))
 
 
 def _cmd_name(user: db.User, rest: str) -> None:
@@ -270,10 +312,14 @@ def _cmd_resume(user: db.User, _rest: str) -> None:
 def _cmd_me(user: db.User, _rest: str) -> None:
     fresh = db.get_user(user["id"])
     assert fresh is not None
+    from armapply.config import settings as _settings
+    smtp_status = "✅ ready" if _settings().smtp_configured else "❌ not configured (auto-apply disabled)"
     lines = [
         f"*Your settings*",
         f"Name: {fresh['name'] or '— set with /name'}",
+        f"Email: {fresh['email'] or '— set with /email'}",
         f"CV: {'✅ loaded' if fresh['cv_text'] else '❌ missing — send a PDF'}",
+        f"SMTP: {smtp_status}",
         f"Queries: {', '.join(fresh['queries']) or '—'}",
         f"Locations: {', '.join(fresh['locations']) or '—'}",
         f"Channels: {', '.join('@' + c for c in fresh['telegram_channels']) or '—'}",
@@ -307,6 +353,8 @@ _COMMANDS = {
     "/start": _cmd_start,
     "/help": _cmd_start,
     "/name": _cmd_name,
+    "/email": _cmd_email,
+    "/cv": _cmd_cv,
     "/queries": _cmd_queries,
     "/locations": _cmd_locations,
     "/channels": _cmd_channels,
@@ -397,16 +445,17 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         telegram_api.answer_callback(cb.callback_id, "No cover letter yet.", show_alert=True)
         return
     result = apply_mod.apply_to_job(user, job)
-    if result.outcome == "queued":
-        telegram_api.answer_callback(cb.callback_id, "Application queued.")
+    if result.outcome == "sent":
+        telegram_api.answer_callback(cb.callback_id, "Email sent.")
         telegram_api.edit_message_text(
             cb.chat_id, cb.message_id,
-            _match_message(job) + f"\n\n✅ *Applied* — to `{_md_escape(result.to_email or '')}`",
+            _match_message(job) + f"\n\n✅ *Sent* — to `{_md_escape(result.to_email or '')}`",
             reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
             parse_mode="Markdown",
         )
     else:
-        telegram_api.answer_callback(cb.callback_id, "No recruiter email — open the link.")
+        # No recruiter email OR SMTP not configured → deep-link only.
+        telegram_api.answer_callback(cb.callback_id, "Open the link to apply.")
         telegram_api.edit_message_text(
             cb.chat_id, cb.message_id,
             _match_message(job) + "\n\n🔗 *Apply manually* — see the link above.",

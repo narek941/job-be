@@ -17,6 +17,8 @@ def _fake_settings():
         telegram_bot_token="x",
         telegram_webhook_secret="",
         pipeline_secret="cron-secret",
+        gmail_address="",
+        gmail_app_password="",
         worldwide_ratio_default=0.1,
         min_score_notify_default=6,
         min_score_auto_apply_default=8,

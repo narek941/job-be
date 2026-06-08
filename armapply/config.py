@@ -47,9 +47,16 @@ class Settings:
     telegram_bot_token: str
     telegram_webhook_secret: str
     pipeline_secret: str
+    # Optional — only required when auto-apply is enabled for any user.
+    gmail_address: str
+    gmail_app_password: str
     worldwide_ratio_default: float
     min_score_notify_default: int
     min_score_auto_apply_default: int
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.gmail_address and self.gmail_app_password)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -60,6 +67,8 @@ class Settings:
             telegram_bot_token=_env_required("TELEGRAM_BOT_TOKEN"),
             telegram_webhook_secret=_env("TELEGRAM_WEBHOOK_SECRET", ""),
             pipeline_secret=_env_required("PIPELINE_SECRET"),
+            gmail_address=_env("GMAIL_ADDRESS", ""),
+            gmail_app_password=_env("GMAIL_APP_PASSWORD", ""),
             worldwide_ratio_default=_env_float("WORLDWIDE_RATIO_DEFAULT", 0.1),
             min_score_notify_default=_env_int("MIN_SCORE_NOTIFY_DEFAULT", 6),
             min_score_auto_apply_default=_env_int("MIN_SCORE_AUTO_APPLY_DEFAULT", 8),

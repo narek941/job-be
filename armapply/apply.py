@@ -12,15 +12,18 @@ the user: either "queued for send" or "no email, here's a deep link".
 from __future__ import annotations
 
 import logging
+import smtplib
 from dataclasses import dataclass
+from email.message import EmailMessage
 from typing import Literal
 
 from armapply import db
+from armapply.config import settings
 
 log = logging.getLogger(__name__)
 
 
-ApplyOutcome = Literal["queued", "deep_link"]
+ApplyOutcome = Literal["sent", "deep_link"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,10 @@ def _body(job: db.Job, cover_letter: str, applicant_email: str | None) -> str:
 # Transport (stub)
 # ---------------------------------------------------------------------------
 
+class SmtpNotConfigured(RuntimeError):
+    """Raised when SMTP credentials are missing — caller decides what to do."""
+
+
 def _send_email(
     *,
     to_email: str,
@@ -63,14 +70,40 @@ def _send_email(
     cv_pdf: bytes | None,
     cv_filename: str | None,
 ) -> None:
-    """Real send wired in later. Today: log + raise NotImplementedError so we
-    never silently 'succeed' against /dev/null."""
-    log.info(
-        "STUB email | to=%s reply_to=%s subj=%r body_len=%d cv=%s",
-        to_email, reply_to, subject, len(body),
-        f"{cv_filename} ({len(cv_pdf) if cv_pdf else 0} bytes)" if cv_pdf else "none",
-    )
-    raise NotImplementedError("Email transport not yet wired. Apply row will stay 'queued'.")
+    """Send via Gmail SMTP over SSL (port 465).
+
+    Reply-To is set to the candidate's own email when known so recruiter
+    responses skip applybot's inbox and land with them directly.
+    """
+    s = settings()
+    if not s.smtp_configured:
+        raise SmtpNotConfigured(
+            "GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set — auto-apply is disabled."
+        )
+
+    msg = EmailMessage()
+    msg["From"] = s.gmail_address
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg.set_content(body)
+
+    if cv_pdf:
+        msg.add_attachment(
+            cv_pdf,
+            maintype="application",
+            subtype="pdf",
+            filename=cv_filename or "cv.pdf",
+        )
+
+    log.info("SMTP send | to=%s subj=%r body_len=%d cv=%s",
+             to_email, subject, len(body),
+             f"{cv_filename} ({len(cv_pdf) if cv_pdf else 0} bytes)" if cv_pdf else "none")
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+        smtp.login(s.gmail_address, s.gmail_app_password)
+        smtp.send_message(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +124,10 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
     subject = _subject(job)
     body = _body(job, job["cover_letter"], user["email"])
     to_email = job["recruiter_email"]
-    outcome: ApplyOutcome = "queued" if to_email else "deep_link"
+
+    # Decide outcome up front: SMTP not configured OR no recruiter email → deep_link.
+    can_send = bool(to_email) and settings().smtp_configured
+    outcome: ApplyOutcome = "sent" if can_send else "deep_link"
 
     row = db.query(
         """
@@ -106,26 +142,32 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
             subject,
             body,
             user["cv_pdf"] if to_email else None,
-            outcome,
+            "queued" if can_send else "deep_link",
         ),
         fetch="one",
     )
     assert row is not None
     apply_id = int(row["id"])
 
-    if outcome == "queued":
+    if can_send:
         try:
             _send_email(
                 to_email=to_email or "",
-                reply_to=user["email"],
+                reply_to=user["email"] or None,
                 subject=subject,
                 body=body,
                 cv_pdf=user["cv_pdf"],
                 cv_filename=user["cv_pdf_filename"],
             )
-        except NotImplementedError:
-            # Stay queued; transport will pick it up once wired.
-            log.info("apply %d queued (transport stub)", apply_id)
+        except SmtpNotConfigured:
+            # Demote to deep_link — caller will hand back the listing URL.
+            db.query(
+                "UPDATE applies SET status = 'deep_link' WHERE id = %s",
+                (apply_id,),
+            )
+            db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+            return ApplyResult(outcome="deep_link", apply_id=apply_id, to_email=None,
+                               subject=subject, body=body)
         except Exception as e:
             db.query(
                 "UPDATE applies SET status = 'failed', error = %s WHERE id = %s",
@@ -133,23 +175,16 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
             )
             db.update_job(job["id"], status="failed", apply_error=str(e)[:500])
             raise
-        else:
-            db.query(
-                "UPDATE applies SET status = 'sent', sent_at = NOW() WHERE id = %s",
-                (apply_id,),
-            )
-            db.update_job(job["id"], status="applied", applied_at=db.utcnow())
-            return ApplyResult(outcome="queued", apply_id=apply_id, to_email=to_email,
-                               subject=subject, body=body)
 
-        # Still queued (stub). Mark the job as 'applied' optimistically so the
-        # user can move on; once real transport lands we'll demote to a real send.
+        db.query(
+            "UPDATE applies SET status = 'sent', sent_at = NOW() WHERE id = %s",
+            (apply_id,),
+        )
         db.update_job(job["id"], status="applied", applied_at=db.utcnow())
-        return ApplyResult(outcome="queued", apply_id=apply_id, to_email=to_email,
+        return ApplyResult(outcome="sent", apply_id=apply_id, to_email=to_email,
                            subject=subject, body=body)
 
-    # No recruiter email — record as deep_link, leave job notified so the user
-    # can still hit "Apply" from the bot (we'll respond with the URL).
+    # No recruiter email, or SMTP not configured — record as deep_link.
     db.update_job(job["id"], status="applied", applied_at=db.utcnow())
-    return ApplyResult(outcome="deep_link", apply_id=apply_id, to_email=None,
+    return ApplyResult(outcome="deep_link", apply_id=apply_id, to_email=to_email,
                        subject=subject, body=body)
