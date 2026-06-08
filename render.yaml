@@ -7,21 +7,13 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
-      - key: GROQ_API_KEY
-        sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: LLM_MODEL
-        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
       - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: ARMAPPLY_JWT_SECRET
+      - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
       - key: PIPELINE_SECRET
-        sync: false
-      - key: ARMAPPLY_SEED_TEST_USER
-        value: "true"
-      - key: ARMAPPLY_TEST_USER_EMAIL
-        sync: false
-      - key: ARMAPPLY_TEST_USER_PASSWORD
         sync: false

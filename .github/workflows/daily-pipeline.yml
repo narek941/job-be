@@ -56,7 +56,7 @@ jobs:
             -w "\n%{http_code}" \
             -X POST \
             -H "X-Pipeline-Secret: ${{ secrets.PIPELINE_SECRET }}" \
-            "${{ vars.RENDER_URL }}/pipeline/cron")
+            "${{ vars.RENDER_URL }}/cron")
 
           BODY=$(printf "%s" "$RESPONSE" | sed '$d')
           HTTP_CODE=$(printf "%s" "$RESPONSE" | tail -n 1)
