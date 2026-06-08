@@ -121,24 +121,77 @@ def score_job(
 
 _COVER_SYSTEM = (
     "You are the candidate. Write a short, sincere cover letter (4-6 short "
-    "paragraphs, 180-260 words total) for the role below. Anchor every claim "
-    "in the CV — do not invent experience or invent employers. No fluff, no "
-    "hyperbole, no emojis. Start with the role and one specific reason it "
-    "interests you. End with a single concrete call to action. Output plain "
-    "text only — no markdown, no headers, no labels.\n\n"
-    "IMPORTANT: The candidate's full name will be given to you explicitly. "
-    "Words that look like the name are NOT a company — never write 'at "
-    "<name>' as if it were an employer. Use only employer names that appear "
-    "in the CV's work-experience entries."
+    "paragraphs, 180-260 words total) for the role below. Output plain text "
+    "only — no markdown, no headers, no labels, no emojis.\n\n"
+    "GROUNDING — strict rules:\n"
+    "  • Use ONLY the employers, projects, and skills present in the "
+    "    structured profile. Do NOT invent companies, dates, or projects.\n"
+    "  • Words that look like the candidate's NAME (provided explicitly) "
+    "    are not companies. Never write 'at <name>'.\n"
+    "  • Reference at least one *specific* bullet or project that matches "
+    "    the job description — name the technology or outcome.\n"
+    "  • If the job mentions a tech the candidate doesn't have in their "
+    "    profile, acknowledge transferable adjacent experience instead of "
+    "    claiming the missing tech.\n"
+    "\n"
+    "Structure: opening line names the role + 1 concrete reason; body of "
+    "2-3 short paragraphs each tying one CV-evidenced strength to a job "
+    "requirement; close with one sentence call to action. No salutation "
+    "block at the top (no 'Dear Hiring Manager' — caller adds that)."
 )
 
 
-def cover_letter(cv: str, job: db.Job, *, candidate_name: str | None = None) -> str:
+def _profile_section(profile: dict | None) -> str:
+    if not profile:
+        return ""
+    out: list[str] = ["STRUCTURED PROFILE (use as ground truth):"]
+    if profile.get("headline"):
+        out.append(f"Headline: {profile['headline']}")
+    if profile.get("summary"):
+        out.append(f"Summary: {profile['summary']}")
+    if profile.get("skills"):
+        out.append(f"Skills: {', '.join(profile['skills'][:25])}")
+    exp = profile.get("experience") or []
+    if exp:
+        out.append("Experience (most recent first):")
+        for e in exp[:5]:
+            role = (e.get("role") or "").strip()
+            company = (e.get("company") or "").strip()
+            dates = f"{e.get('from', '')} – {e.get('to', '')}".strip(" –")
+            out.append(f"  • {role} @ {company} ({dates})".rstrip(" ()"))
+            for b in (e.get("bullets") or [])[:4]:
+                if isinstance(b, str) and b.strip():
+                    out.append(f"      - {b.strip()}")
+    prj = profile.get("projects") or []
+    if prj:
+        out.append("Projects:")
+        for p in prj[:5]:
+            name = (p.get("name") or "").strip()
+            stack = p.get("stack") or []
+            desc = (p.get("desc") or "").strip()
+            line = f"  • {name}"
+            if isinstance(stack, list) and stack:
+                line += f" [{', '.join(stack[:6])}]"
+            if desc:
+                line += f" — {desc}"
+            out.append(line)
+    return "\n".join(out) + "\n\n"
+
+
+def cover_letter(
+    cv: str,
+    job: db.Job,
+    *,
+    candidate_name: str | None = None,
+    profile: dict | None = None,
+) -> str:
     """Returns a cover-letter body suitable for email."""
     name_line = f"Candidate's name: {candidate_name}\n\n" if candidate_name else ""
+    profile_block = _profile_section(profile)
+    cv_block = f"RAW CV (fallback context only):\n{_clip(cv, 4000)}\n\n" if cv else ""
     text = llm.complete(
         system=_COVER_SYSTEM,
-        user=f"{name_line}CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}",
+        user=f"{name_line}{profile_block}{cv_block}---\n\nJob:\n{_job_brief(job)}",
         temperature=0.4,
         max_tokens=1500,
     )

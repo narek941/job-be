@@ -160,6 +160,9 @@ _HELP = (
     "  `/name Narek Kolyan`  (your name — used in cover letters)\n"
     "  `/email you@gmail.com`  (Reply-To address for apply emails)\n"
     "  `/cv`  show CV info / `/cv preview` show first lines\n"
+    "  `/profile`  show parsed CV / `/profile rebuild` to re-parse\n"
+    "  `/skills` list, `/skills add a, b`, `/skills remove a`\n"
+    "  `/summary <text>` overwrite the profile summary\n"
     "  `/queries frontend, react, node`\n"
     "  `/locations Yerevan, Remote`\n"
     "  `/channels senior_frontender easy_frontend_jobs`\n"
@@ -216,6 +219,88 @@ def _cmd_email(user: db.User, rest: str) -> None:
         raise CommandError("Usage: /email you@example.com  (used as Reply-To on apply emails)")
     db.update_user(user["id"], email=addr)
     telegram_api.send_message(user["tg_chat_id"], f"✅ Email: {addr}")
+
+
+def _cmd_profile(user: db.User, rest: str) -> None:
+    """`/profile` show, `/profile rebuild` re-extract from current cv_text."""
+    from armapply import profile as profile_mod
+
+    fresh = db.get_user(user["id"])
+    assert fresh is not None
+    arg = rest.strip().lower()
+
+    if arg == "rebuild":
+        if not fresh["cv_text"]:
+            raise CommandError("No CV stored — send a PDF first.")
+        telegram_api.send_message(user["tg_chat_id"], "🔄 Re-parsing your CV…")
+        try:
+            parsed = profile_mod.extract_profile(fresh["cv_text"])
+        except Exception as e:
+            telegram_api.send_message(user["tg_chat_id"], f"⚠️ Parse failed: {e}")
+            return
+        db.update_user(user["id"], cv_profile=dict(parsed))
+        telegram_api.send_message(user["tg_chat_id"], "✅ Profile rebuilt.\n\n" + profile_mod.render(parsed))
+        return
+
+    telegram_api.send_message(user["tg_chat_id"], profile_mod.render(fresh["cv_profile"]))
+
+
+def _cmd_skills(user: db.User, rest: str) -> None:
+    """`/skills` list, `/skills add a, b`, `/skills remove a`."""
+    from armapply import profile as profile_mod
+
+    fresh = db.get_user(user["id"])
+    assert fresh is not None
+    profile = fresh["cv_profile"] or {}
+
+    parts = rest.strip().split(maxsplit=1)
+    op = parts[0].lower() if parts else ""
+    payload = parts[1] if len(parts) > 1 else ""
+
+    if not op or op == "list":
+        skills = profile.get("skills") or []
+        msg = ("🛠 Skills:\n" + ", ".join(skills)) if skills else "No skills stored. /profile rebuild to extract."
+        telegram_api.send_message(user["tg_chat_id"], msg)
+        return
+
+    if op == "add":
+        items = [s.strip() for s in payload.split(",") if s.strip()]
+        if not items:
+            raise CommandError("Usage: /skills add React, TypeScript, Node.js")
+        updated = profile_mod.add_skills(profile, items)
+        db.update_user(user["id"], cv_profile=dict(updated))
+        telegram_api.send_message(user["tg_chat_id"], "✅ Skills now:\n" + ", ".join(updated.get("skills") or []))
+        return
+
+    if op == "remove":
+        items = [s.strip() for s in payload.split(",") if s.strip()]
+        if not items:
+            raise CommandError("Usage: /skills remove React")
+        updated = profile_mod.remove_skills(profile, items)
+        db.update_user(user["id"], cv_profile=dict(updated))
+        telegram_api.send_message(user["tg_chat_id"], "✅ Skills now:\n" + ", ".join(updated.get("skills") or ["—"]))
+        return
+
+    raise CommandError("Usage: /skills [list|add a,b|remove a]")
+
+
+def _cmd_summary(user: db.User, rest: str) -> None:
+    """`/summary` show, `/summary <text>` replace."""
+    from armapply import profile as profile_mod
+
+    fresh = db.get_user(user["id"])
+    assert fresh is not None
+    profile = fresh["cv_profile"] or {}
+
+    text = rest.strip()
+    if not text:
+        cur = profile.get("summary") or "—"
+        telegram_api.send_message(user["tg_chat_id"], f"📝 Summary:\n{cur}\n\nTo replace: /summary <new text>")
+        return
+
+    updated = profile_mod.set_summary(profile, text)
+    db.update_user(user["id"], cv_profile=dict(updated))
+    telegram_api.send_message(user["tg_chat_id"], f"✅ Summary updated:\n{updated['summary']}")
 
 
 def _cmd_cv(user: db.User, rest: str) -> None:
@@ -358,6 +443,9 @@ _COMMANDS = {
     "/name": _cmd_name,
     "/email": _cmd_email,
     "/cv": _cmd_cv,
+    "/profile": _cmd_profile,
+    "/skills": _cmd_skills,
+    "/summary": _cmd_summary,
     "/queries": _cmd_queries,
     "/locations": _cmd_locations,
     "/channels": _cmd_channels,
@@ -375,7 +463,7 @@ _COMMANDS = {
 # ---------------------------------------------------------------------------
 
 def _handle_cv_upload(user: db.User, file_id: str, filename: str) -> None:
-    from armapply import match  # local import: match imports llm which needs settings
+    from armapply import match, profile as profile_mod
 
     telegram_api.send_message(user["tg_chat_id"], "📄 Reading your CV…")
     try:
@@ -391,10 +479,12 @@ def _handle_cv_upload(user: db.User, file_id: str, filename: str) -> None:
         telegram_api.send_message(
             user["tg_chat_id"],
             "⚠️ Couldn't extract enough text from that PDF. "
-            "Try a different export, or send plain text via /queries first.",
+            "Try a different export, or paste text manually.",
         )
         return
 
+    # Store the raw artifacts first so a profile-extraction failure doesn't
+    # lose the upload.
     db.update_user(
         user["id"],
         cv_text=text,
@@ -403,8 +493,23 @@ def _handle_cv_upload(user: db.User, file_id: str, filename: str) -> None:
     )
     telegram_api.send_message(
         user["tg_chat_id"],
-        f"✅ CV stored ({len(text):,} chars). Set /queries to start receiving matches.",
+        f"✅ CV stored ({len(text):,} chars). Parsing structured profile…",
     )
+
+    try:
+        parsed = profile_mod.extract_profile(text)
+        db.update_user(user["id"], cv_profile=dict(parsed))
+        telegram_api.send_message(
+            user["tg_chat_id"],
+            "✅ Profile parsed. Review with /profile — edit with /skills or /summary.",
+        )
+    except Exception as e:
+        log.exception("profile extraction failed")
+        telegram_api.send_message(
+            user["tg_chat_id"],
+            f"⚠️ CV stored but profile parsing failed: {e}. "
+            "Run /profile rebuild later to retry.",
+        )
 
 
 # ---------------------------------------------------------------------------

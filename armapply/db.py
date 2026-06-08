@@ -43,6 +43,7 @@ class User(TypedDict):
     cv_text: str | None
     cv_pdf: bytes | None
     cv_pdf_filename: str | None
+    cv_profile: dict[str, Any] | None
     auto_apply: bool
     min_score_notify: int
     min_score_auto_apply: int
@@ -278,6 +279,14 @@ _MIGRATIONS: list[tuple[int, str]] = [
         # mistaken for a previous employer. NULL until the user runs /name.
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;",
     ),
+    (
+        3,
+        # Structured CV profile extracted by the LLM at upload time.
+        # Shape: {summary, headline, skills[], experience[{company, role,
+        # from, to, bullets[]}], projects[{name, stack[], desc}], education[]}.
+        # NULL until the first extraction succeeds.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS cv_profile JSONB;",
+    ),
 ]
 
 
@@ -348,6 +357,7 @@ _USER_UPDATABLE = frozenset(
         "cv_text",
         "cv_pdf",
         "cv_pdf_filename",
+        "cv_profile",
         "auto_apply",
         "min_score_notify",
         "min_score_auto_apply",
@@ -367,6 +377,9 @@ def update_user(user_id: int, **fields: Any) -> None:
     bad = set(fields) - _USER_UPDATABLE
     if bad:
         raise ValueError(f"Cannot update fields: {sorted(bad)}")
+    # JSONB columns expect a serialized string when passed via psycopg2.
+    if "cv_profile" in fields and fields["cv_profile"] is not None:
+        fields["cv_profile"] = json.dumps(fields["cv_profile"])
     assignments = ", ".join(f"{k} = %s" for k in fields)
     params = (*fields.values(), user_id)
     query(

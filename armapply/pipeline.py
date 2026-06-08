@@ -64,10 +64,13 @@ def _generate_for_match(user: db.User, job: db.Job) -> db.Job:
     """Ensure cover_letter + cv_tweaks exist on the job. Returns the refreshed row."""
     cv = user["cv_text"] or ""
     name = user["name"]
+    profile = user["cv_profile"]
     updates: dict[str, object] = {}
     if not job["cover_letter"]:
         try:
-            updates["cover_letter"] = match.cover_letter(cv, job, candidate_name=name)
+            updates["cover_letter"] = match.cover_letter(
+                cv, job, candidate_name=name, profile=profile,
+            )
         except Exception as e:
             log.warning("cover_letter failed job=%d: %s", job["id"], e)
     if not job["cv_tweaks"]:
