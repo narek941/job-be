@@ -271,7 +271,14 @@ def discover_linkedin(
                     verbose=0,
                 )
             except Exception as e:
-                log.warning("linkedin: query=%r loc=%r failed: %s", q, loc, e)
+                msg = str(e).lower()
+                # jobspy rejects locations it doesn't recognise as supported
+                # countries (e.g. "Armenia"). That's expected, not a bug — log
+                # quietly and move on.
+                if "invalid country string" in msg:
+                    log.debug("linkedin: skipping unsupported loc=%r", loc)
+                else:
+                    log.warning("linkedin: query=%r loc=%r failed: %s", q, loc, e)
                 continue
 
             for _, row in df.iterrows():
