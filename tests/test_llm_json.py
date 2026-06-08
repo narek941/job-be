@@ -63,3 +63,25 @@ def test_safety_block_raises_llm_error() -> None:
          patch("httpx.Client.post", return_value=_mock_response(200, body)):
         with pytest.raises(llm.LLMError, match="SAFETY"):
             llm.complete(system="s", user="u")
+
+
+def test_retries_on_503_then_succeeds() -> None:
+    success_body = {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]}
+    responses = [
+        _mock_response(503, {"error": "busy"}),
+        _mock_response(503, {"error": "still busy"}),
+        _mock_response(200, success_body),
+    ]
+    with patch("armapply.llm.settings", return_value=_fake_settings()), \
+         patch("armapply.llm.time.sleep"), \
+         patch("httpx.Client.post", side_effect=responses):
+        assert llm.complete(system="s", user="u") == "OK"
+
+
+def test_gives_up_after_max_attempts() -> None:
+    busy = _mock_response(503, {"error": "busy"})
+    with patch("armapply.llm.settings", return_value=_fake_settings()), \
+         patch("armapply.llm.time.sleep"), \
+         patch("httpx.Client.post", return_value=busy):
+        with pytest.raises(llm.LLMError, match="503"):
+            llm.complete(system="s", user="u")

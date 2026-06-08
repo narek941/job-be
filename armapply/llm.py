@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -23,6 +24,13 @@ log = logging.getLogger(__name__)
 
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 _TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+
+# Status codes worth retrying — Gemini emits 503 on demand spikes and 429
+# when the per-minute quota is breached. 500 sometimes accompanies transient
+# upstream failures and is also safe to retry idempotently.
+_RETRY_STATUS = {429, 500, 503}
+_MAX_ATTEMPTS = 4
+_BACKOFF_BASE_S = 1.5
 
 
 class LLMError(RuntimeError):
@@ -39,7 +47,9 @@ def _call(
 ) -> str:
     s = settings()
     url = f"{_BASE_URL}/{s.gemini_model}:generateContent"
-    params = {"key": s.gemini_api_key}
+    # Pass the key via header (not query param) so it doesn't appear in
+    # httpx access logs.
+    headers = {"x-goog-api-key": s.gemini_api_key}
     payload: dict[str, Any] = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -51,15 +61,31 @@ def _call(
     if json_mode:
         payload["generationConfig"]["responseMimeType"] = "application/json"
 
-    try:
-        with httpx.Client(timeout=_TIMEOUT) as client:
-            r = client.post(url, params=params, json=payload)
-    except httpx.HTTPError as e:
-        raise LLMError(f"LLM transport error: {e}") from e
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        for attempt in range(_MAX_ATTEMPTS):
+            is_last = attempt + 1 == _MAX_ATTEMPTS
+            try:
+                r = client.post(url, headers=headers, json=payload)
+            except httpx.HTTPError as e:
+                if is_last:
+                    raise LLMError(f"LLM transport error after {_MAX_ATTEMPTS} attempts: {e}") from e
+                sleep_s = _BACKOFF_BASE_S * (2 ** attempt)
+                log.warning("LLM transport error (attempt %d): %s; sleeping %.1fs",
+                            attempt + 1, e, sleep_s)
+                time.sleep(sleep_s)
+                continue
 
-    if r.status_code != 200:
-        body = r.text[:500]
-        raise LLMError(f"LLM HTTP {r.status_code}: {body}")
+            if r.status_code == 200:
+                break
+
+            body = r.text[:500]
+            if r.status_code in _RETRY_STATUS and not is_last:
+                sleep_s = _BACKOFF_BASE_S * (2 ** attempt)
+                log.warning("LLM HTTP %d (attempt %d), sleeping %.1fs",
+                            r.status_code, attempt + 1, sleep_s)
+                time.sleep(sleep_s)
+                continue
+            raise LLMError(f"LLM HTTP {r.status_code}: {body}")
 
     data = r.json()
     candidates = data.get("candidates") or []
