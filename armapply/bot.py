@@ -561,15 +561,44 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
             reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
             parse_mode="Markdown",
         )
-    else:
-        # No recruiter email OR SMTP not configured → deep-link only.
-        telegram_api.answer_callback(cb.callback_id, "Open the link to apply.")
-        telegram_api.edit_message_text(
-            cb.chat_id, cb.message_id,
-            _match_message(job) + "\n\n🔗 *Apply manually* — see the link above.",
-            reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
-            parse_mode="Markdown",
-        )
+        return
+
+    # deep_link path: build a pre-filled Gmail compose URL so the user can
+    # send manually with one tap. CV PDF is forwarded as a separate Telegram
+    # document message (Gmail's compose URL can't attach files).
+    compose_url = apply_mod.gmail_compose_url(
+        to=result.to_email, subject=result.subject, body=result.body,
+    )
+    missing_recipient = not result.to_email
+    note = (
+        "✏️ *Add the recruiter email* in the To: field, then send."
+        if missing_recipient
+        else "📧 *Compose tab pre-filled.* Attach the CV (sent below) and click Send."
+    )
+    telegram_api.answer_callback(
+        cb.callback_id,
+        "Add recipient" if missing_recipient else "Open Gmail",
+    )
+    telegram_api.edit_message_text(
+        cb.chat_id, cb.message_id,
+        _match_message(job) + "\n\n" + note,
+        reply_markup={"inline_keyboard": [
+            [{"text": "📧 Compose in Gmail", "url": compose_url}],
+            [{"text": "🔗 Open listing", "url": job["url"]}],
+        ]},
+        parse_mode="Markdown",
+    )
+    # Forward the user's CV PDF so they can attach it in one tap.
+    if user["cv_pdf"]:
+        try:
+            telegram_api.send_document(
+                cb.chat_id,
+                filename=user["cv_pdf_filename"] or "cv.pdf",
+                content=bytes(user["cv_pdf"]),
+                caption="Attach this to the Gmail draft above.",
+            )
+        except Exception:
+            log.exception("send_document failed for user=%d job=%d", user["id"], job["id"])
 
 
 def _cb_skip(user: db.User, job: db.Job, cb: IncomingCallback) -> None:

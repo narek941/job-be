@@ -88,6 +88,30 @@ def answer_callback(callback_id: str, text: str = "", show_alert: bool = False) 
     })
 
 
+def send_document(
+    chat_id: int,
+    *,
+    filename: str,
+    content: bytes,
+    caption: str = "",
+    mime_type: str = "application/pdf",
+) -> dict[str, Any]:
+    """Upload a file as a Telegram document message."""
+    files = {"document": (filename or "file", content, mime_type)}
+    data: dict[str, str] = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption[:1024]
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        r = client.post(f"{_base()}/sendDocument", data=data, files=files)
+    try:
+        payload = r.json()
+    except Exception as e:
+        raise TelegramError(f"telegram sendDocument: non-JSON response (status={r.status_code})") from e
+    if not payload.get("ok"):
+        raise TelegramError(f"telegram sendDocument: {payload.get('description', payload)}")
+    return payload["result"]
+
+
 def get_file(file_id: str) -> dict[str, Any]:
     return _post("getFile", {"file_id": file_id})
 
