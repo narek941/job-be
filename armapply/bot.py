@@ -430,9 +430,18 @@ def _cmd_me(user: db.User, _rest: str) -> None:
 
 
 def _cmd_connect_gmail(user: db.User, _rest: str) -> None:
-    """Send the user the OAuth consent URL. Clicking it opens Google's
-    consent screen; on grant we get redirected to /oauth/google/callback
-    and bind the refresh_token to this chat."""
+    """Send the user the OAuth consent URL as an inline-keyboard button.
+
+    We must NOT inline the raw URL in a parse_mode='Markdown' message —
+    the URL contains `_` (access_type=offline, include_granted_scopes,
+    response_type, …) and Telegram's legacy Markdown parser treats those
+    as italic markers, silently truncating the URL at the next `_`. The
+    user ends up clicking a half-URL and Google rejects it with
+    'Required parameter is missing: response_type'.
+
+    Inline-keyboard `url` buttons are passed verbatim — no parsing — so
+    they sidestep this entire class of bug.
+    """
     from armapply.config import settings as _settings
 
     if not _settings().gmail_oauth_configured:
@@ -446,17 +455,20 @@ def _cmd_connect_gmail(user: db.User, _rest: str) -> None:
         raise CommandError(str(e))
     fresh = db.get_user(user["id"])
     current = fresh and fresh.get("gmail_address")
-    note = (
-        f"Currently connected as {current}. Re-authorizing will replace it.\n\n"
-        if current
-        else ""
+    body = (
+        (f"Currently connected as `{current}`. Re-authorizing will replace it.\n\n"
+         if current else "")
+        + "🔐 *Connect Gmail* — tap the button below (link valid 10 min).\n\n"
+        "After you grant access I'll create real Gmail drafts on Apply — "
+        "To/Subject/Body + your CV attached — ready to review and send."
     )
     telegram_api.send_message(
         user["tg_chat_id"],
-        f"{note}🔐 *Connect Gmail* (valid 10 min):\n{url}\n\n"
-        "After granting access I'll create real Gmail drafts on Apply — with "
-        "your CV attached — ready for you to review and send.",
+        body,
         parse_mode="Markdown",
+        reply_markup={
+            "inline_keyboard": [[{"text": "🔐 Connect Gmail", "url": url}]]
+        },
         disable_web_page_preview=True,
     )
 
