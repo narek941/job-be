@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING, Iterable, TypedDict
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
-from bs4 import BeautifulSoup
+import warnings
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+
+# job.am serves RSS that we parse with html.parser to avoid an lxml dep.
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 from armapply import db
 
@@ -230,6 +234,158 @@ def discover_staffam(_queries: Iterable[str], *, max_pages: int = 5, enrich_top:
         len(listings), len(to_enrich), skipped_non_tech,
     )
     return list(listings.values())
+
+
+# ---------------------------------------------------------------------------
+# job.am (RSS feed — much cleaner than scraping their JS-rendered HTML)
+# ---------------------------------------------------------------------------
+
+JOBAM_FEED = "https://job.am/api/jobs/feed/"
+
+
+def _jobam_strip_html(html: str | None) -> str | None:
+    if not html:
+        return None
+    return BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
+
+
+def discover_jobam(*, limit: int = 60) -> list[RawJob]:
+    """Parse job.am's public RSS feed. Each item is one vacancy.
+
+    The feed is the cheapest source we have: no JS rendering, no rate limit
+    in practice, and bilingual titles. We drop obvious non-tech listings
+    via the same heuristic as staff.am.
+    """
+    headers = {"User-Agent": USER_AGENT}
+    try:
+        with httpx.Client(timeout=STAFFAM_TIMEOUT, headers=headers, follow_redirects=True) as client:
+            r = client.get(JOBAM_FEED)
+            r.raise_for_status()
+    except httpx.HTTPError as e:
+        log.warning("job.am feed fetch failed: %s", e)
+        return []
+
+    # html.parser handles RSS items fine and avoids requiring lxml.
+    soup = BeautifulSoup(r.text, "html.parser")
+    out: list[RawJob] = []
+    skipped_non_tech = 0
+    for item in soup.find_all("item")[:limit * 2]:
+        title_el = item.find("title")
+        link_el = item.find("link")
+        if not title_el or not link_el:
+            continue
+        title = (title_el.get_text() or "").strip()
+        # In some BS4 parsers `<link>` is treated as an empty tag whose URL
+        # ends up in the tag *tail* rather than .text. Fall back to next_sibling.
+        url_text = (link_el.get_text() or "").strip()
+        if not url_text:
+            nxt = link_el.next_sibling
+            url_text = (str(nxt).strip() if nxt else "")
+        if not title or not url_text:
+            continue
+        if _looks_non_tech(title):
+            skipped_non_tech += 1
+            continue
+        author_el = item.find("author")
+        company = (author_el.get_text() or "").strip() if author_el else None
+        desc = _jobam_strip_html(item.find("description").get_text() if item.find("description") else None)
+        out.append(RawJob(
+            url=clean_url(url_text),
+            source="job_am",
+            title=title,
+            company=company,
+            location="Armenia",
+            description=desc[:8000] if desc else None,
+            salary=None,
+            recruiter_email=extract_email(desc),
+        ))
+        if len(out) >= limit:
+            break
+    log.info("job.am: %d listings (%d non-tech skipped)", len(out), skipped_non_tech)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# myjob.am (classic HTML, .shortJobContainer cards)
+# ---------------------------------------------------------------------------
+
+MYJOB_BASE = "https://www.myjob.am/"
+
+
+def _myjob_parse_card(a) -> RawJob | None:
+    href = a.get("href") or ""
+    if not href or "Announcement.aspx" not in href:
+        return None
+    url = clean_url(urljoin(MYJOB_BASE, href))
+    title_el = a.select_one(".shortJobPosition")
+    company_el = a.select_one(".shortJobCompany")
+    addr_el = a.select_one(".shortJobAddress")
+    if not title_el:
+        return None
+    title = (title_el.get_text() or "").strip()
+    if not title:
+        return None
+    return RawJob(
+        url=url,
+        source="myjob_am",
+        title=title,
+        company=(company_el.get_text() or "").strip() if company_el else None,
+        location=(addr_el.get_text() or "").strip() if addr_el else "Armenia",
+        description=None,
+        salary=None,
+        recruiter_email=None,
+    )
+
+
+def _myjob_enrich(client: httpx.Client, job: RawJob) -> RawJob:
+    try:
+        r = client.get(job["url"])
+        r.raise_for_status()
+    except Exception as e:
+        log.warning("myjob.am detail fetch failed for %s: %s", job["url"], e)
+        return job
+    soup = BeautifulSoup(r.text, "html.parser")
+    # The detail page uses ASP.NET ids; the main job body is consistently
+    # inside one of these containers. We fall back to the whole document
+    # text if neither is found, then clip.
+    box = (
+        soup.select_one("#MainContentPlaceHolder_jobContainer")
+        or soup.select_one(".jobContainer")
+        or soup.select_one("#MainContentPlaceHolder_jobPageContainer")
+    )
+    description = box.get_text("\n", strip=True) if box else None
+    return {**job, "description": description, "recruiter_email": extract_email(description)}
+
+
+def discover_myjobam(*, enrich_top: int = 25) -> list[RawJob]:
+    headers = {"User-Agent": USER_AGENT}
+    out: dict[str, RawJob] = {}
+    skipped_non_tech = 0
+    with httpx.Client(timeout=STAFFAM_TIMEOUT, headers=headers, follow_redirects=True) as client:
+        try:
+            r = client.get(MYJOB_BASE)
+            r.raise_for_status()
+        except httpx.HTTPError as e:
+            log.warning("myjob.am fetch failed: %s", e)
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        for a in soup.select('a[href*="Announcement.aspx"]'):
+            j = _myjob_parse_card(a)
+            if not j:
+                continue
+            if _looks_non_tech(j["title"]):
+                skipped_non_tech += 1
+                continue
+            out.setdefault(j["url"], j)
+
+        to_enrich = list(out.values())[:enrich_top]
+        for j in to_enrich:
+            out[j["url"]] = _myjob_enrich(client, j)
+    log.info(
+        "myjob.am: %d listings (%d enriched, %d non-tech skipped)",
+        len(out), len(to_enrich), skipped_non_tech,
+    )
+    return list(out.values())
 
 
 # ---------------------------------------------------------------------------
@@ -484,8 +640,27 @@ def discover_for_user(user: "User") -> dict[str, dict[str, int]]:
     n, u = _persist(user["id"], staffam)
     result["staff_am"] = {"discovered": len(staffam), "new": n, "updated": u}
 
-    # 2) LinkedIn — capped to floor(staffam * worldwide_ratio), bounded [0, 20].
-    cap = max(0, min(20, math.floor(len(staffam) * user["worldwide_ratio"])))
+    # 1b) job.am — bilingual RSS feed, cheap.
+    try:
+        jobam = discover_jobam()
+    except Exception as e:
+        log.warning("job.am discovery failed: %s", e)
+        jobam = []
+    n, u = _persist(user["id"], jobam)
+    result["job_am"] = {"discovered": len(jobam), "new": n, "updated": u}
+
+    # 1c) myjob.am — classic HTML board, mostly Yerevan IT.
+    try:
+        myjob = discover_myjobam()
+    except Exception as e:
+        log.warning("myjob.am discovery failed: %s", e)
+        myjob = []
+    n, u = _persist(user["id"], myjob)
+    result["myjob_am"] = {"discovered": len(myjob), "new": n, "updated": u}
+
+    # 2) LinkedIn — capped to floor(local_pool * worldwide_ratio), bounded [0, 20].
+    local_pool = len(staffam) + len(jobam) + len(myjob)
+    cap = max(0, min(20, math.floor(local_pool * user["worldwide_ratio"])))
     linkedin = discover_linkedin(
         user["queries"],
         user["locations"] or ["Remote"],

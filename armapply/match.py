@@ -12,6 +12,7 @@ human-readable resume toward the listing.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
@@ -120,36 +121,92 @@ def score_job(
 
 
 _COVER_SYSTEM = (
-    "You are the candidate writing a cover letter a recruiter will skim in "
-    "20 seconds. Target 140-200 words across 3-4 short paragraphs. Plain "
-    "text only — no markdown, headers, labels, emojis, or bullet lists.\n\n"
+    "You are writing a cover letter FROM THE CANDIDATE'S OWN SIDE — "
+    "first-person, formal, addressed to the recruiter. Target 150-210 "
+    "words across 3-4 short paragraphs. Plain text only — no markdown, "
+    "headers, labels, emojis, or bullet lists.\n\n"
+    "VOICE — strict rules:\n"
+    "  • Write entirely in first person: 'I', 'my', 'I built…'. NEVER "
+    "    write about the candidate in third person. The opening sentence "
+    "    must NOT start with the candidate's name or say '<Name> is "
+    "    applying for…'. Open with 'I'm writing to apply for…' or "
+    "    'I'm applying for…' or a similar first-person phrasing.\n"
+    "  • The candidate's NAME is provided ONLY so you can avoid mistaking "
+    "    it for a company. The name MUST NOT appear in the letter body — "
+    "    the sign-off (added later by the caller) carries the name.\n\n"
     "GROUNDING — strict rules:\n"
     "  • Use ONLY employers, projects, and skills from the structured "
     "    profile. Do NOT invent companies, titles, dates, metrics, or "
     "    projects. If a metric isn't in the profile, don't invent one.\n"
-    "  • The candidate's NAME is provided explicitly. Names are NOT "
-    "    employers — never write 'at <candidate-name>'.\n"
+    "  • The candidate's name and surname are NEVER company names. If a "
+    "    profile entry's 'company' field looks like the candidate's own "
+    "    name or surname (e.g. profile says company='Kolyan' and the "
+    "    candidate is Narek Kolyan), treat that entry as freelance / "
+    "    personal work — write 'on a freelance project' or 'in my own "
+    "    practice', NEVER 'at Kolyan' or 'at <surname>'.\n"
     "  • Pick the 2-3 job requirements that have the strongest CV "
     "    evidence and ground each in a *specific* bullet or project — "
     "    name the technology, the system, or the outcome.\n"
     "  • If the job mentions a tech the candidate lacks, acknowledge "
     "    transferable adjacent experience honestly. Never fake the tech.\n"
-    "  • No filler ('I am writing to express my interest…'), no superlatives "
-    "    ('passionate', 'world-class', 'cutting-edge'), no clichés, no "
-    "    asking-for-the-job platitudes.\n"
-    "\n"
+    "  • No filler ('I am writing to express my interest…'), no "
+    "    superlatives ('passionate', 'world-class', 'cutting-edge'), no "
+    "    clichés, no asking-for-the-job platitudes.\n\n"
     "STRUCTURE:\n"
-    "  1. Opening (1-2 sentences): name the role + the single strongest "
-    "     concrete reason you're a fit. Lead with evidence, not enthusiasm.\n"
+    "  1. Opening (1-2 sentences, first person): name the role + the "
+    "     single strongest concrete reason I'm a fit. Lead with evidence, "
+    "     not enthusiasm.\n"
     "  2. Middle (1-2 short paragraphs): tie 2-3 specific CV facts to "
-    "     specific job requirements. Use the company/product name from the "
-    "     listing if it appears. Show, don't claim.\n"
+    "     specific job requirements. Use the hiring company/product name "
+    "     from the listing if it appears. Show, don't claim.\n"
     "  3. Close (1 sentence): a low-pressure invite to continue the "
-    "     conversation. No 'thank you for your time' filler.\n"
-    "\n"
+    "     conversation. No 'thank you for your time' filler.\n\n"
     "Do NOT write a salutation ('Dear Hiring Manager' etc.) or sign-off "
     "block ('Best regards, …') — the caller adds those."
 )
+
+
+def _name_tokens(name: str | None) -> set[str]:
+    """Lowercased word tokens from the candidate's name, length >= 3.
+
+    Used to detect profile.experience entries whose `company` field is
+    actually the candidate's own name (a common CV pattern for freelance
+    or personal work). Two-letter tokens are dropped to avoid false hits
+    on initials.
+    """
+    if not name:
+        return set()
+    return {t for t in re.findall(r"[A-Za-z]+", name.lower()) if len(t) >= 3}
+
+
+def _sanitize_profile_for_cover(profile: dict | None, candidate_name: str | None) -> dict | None:
+    """Relabel experience entries whose 'company' looks like the candidate's
+    own name (case-insensitive token match). Prevents the LLM from writing
+    'at <surname>'."""
+    if not profile or not candidate_name:
+        return profile
+    tokens = _name_tokens(candidate_name)
+    if not tokens:
+        return profile
+    exp = profile.get("experience") or []
+    if not isinstance(exp, list):
+        return profile
+    rewritten = []
+    changed = False
+    for e in exp:
+        if not isinstance(e, dict):
+            rewritten.append(e)
+            continue
+        company = (e.get("company") or "").strip()
+        company_tokens = _name_tokens(company)
+        if company_tokens and company_tokens.issubset(tokens):
+            rewritten.append({**e, "company": "Freelance / personal practice"})
+            changed = True
+        else:
+            rewritten.append(e)
+    if not changed:
+        return profile
+    return {**profile, "experience": rewritten}
 
 
 def _profile_section(profile: dict | None) -> str:
@@ -197,8 +254,9 @@ def cover_letter(
     profile: dict | None = None,
 ) -> str:
     """Returns a cover-letter body suitable for email."""
-    name_line = f"Candidate's name: {candidate_name}\n\n" if candidate_name else ""
-    profile_block = _profile_section(profile)
+    safe_profile = _sanitize_profile_for_cover(profile, candidate_name)
+    name_line = f"Candidate's name (for reference only — never write it in the letter): {candidate_name}\n\n" if candidate_name else ""
+    profile_block = _profile_section(safe_profile)
     cv_block = f"RAW CV (fallback context only):\n{_clip(cv, 4000)}\n\n" if cv else ""
     text = llm.complete(
         system=_COVER_SYSTEM,

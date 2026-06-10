@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 JobStatus = Literal["new", "scored", "notified", "applied", "skipped", "muted", "failed"]
 ApplyStatus = Literal["queued", "sent", "failed", "deep_link"]
-JobSource = Literal["staff_am", "linkedin", "telegram"]
+JobSource = Literal["staff_am", "job_am", "myjob_am", "linkedin", "telegram"]
 
 
 class User(TypedDict):

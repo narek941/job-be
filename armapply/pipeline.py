@@ -91,6 +91,27 @@ def _candidates(user: db.User) -> Iterator[db.Job]:
     yield from db.list_jobs_to_notify(user["id"], user["min_score_notify"])
 
 
+# Share of notified jobs allowed to require relocation (location outside the
+# user's home_locations and not remote). The user still wants *some* exposure
+# to global roles, just not a flood — see Adobe-India regression.
+_RELOC_NOTIFY_RATIO = 0.10
+
+
+def _is_relocation_job(job: db.Job, home_locations: list[str] | None) -> bool:
+    """True iff the job's location is outside the user's home locations and
+    isn't remote. Unknown location → False (give benefit of doubt)."""
+    loc = (job["location"] or "").strip().lower()
+    if not loc:
+        return False
+    if "remote" in loc:
+        return False
+    for hl in home_locations or []:
+        token = hl.strip().lower()
+        if token and token in loc:
+            return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
@@ -117,7 +138,21 @@ def run_for_user(user: db.User) -> UserPipelineResult:
         db.log_run(user["id"], "score", "error", str(e)[:1000])
 
     # 3) tailor + notify / auto-apply
+    home_locations = user["locations"] or []
+    reloc_notified = 0
     for job in _candidates(user):
+        # Cap relocation jobs to ~10% of notifications for this run. This is
+        # a notify-time gate (not a discovery filter) so we keep the row in
+        # the DB for inspection; we just don't push another card to Telegram.
+        if _is_relocation_job(job, home_locations):
+            if reloc_notified >= max(1, int((result.notified + 1) * _RELOC_NOTIFY_RATIO)):
+                db.update_job(
+                    job["id"],
+                    status="skipped",
+                    apply_error="relocation cap (10% of notified)",
+                )
+                continue
+
         try:
             job = _generate_for_match(user, job)
         except Exception as e:
@@ -144,6 +179,8 @@ def run_for_user(user: db.User) -> UserPipelineResult:
                 notify_match(user, job)
                 db.update_job(job["id"], status="notified", notified_at=db.utcnow())
                 result.notified += 1
+                if _is_relocation_job(job, home_locations):
+                    reloc_notified += 1
             except Exception as e:
                 result.errors.append(f"notify job={job['id']}: {e}")
                 db.log_run(user["id"], "notify", "error", f"job={job['id']} {e}"[:1000])
