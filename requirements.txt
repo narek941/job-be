@@ -8,5 +8,10 @@ pdfplumber>=0.11.0
 pytesseract>=0.3.10
 pdf2image>=1.17.0
 
+# Gmail OAuth + drafts API (per-user "Apply" → real Gmail draft).
+google-auth>=2.30.0
+google-auth-oauthlib>=1.2.0
+google-api-python-client>=2.140.0
+
 # Tests
 pytest>=8.0.0

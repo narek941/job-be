@@ -53,6 +53,12 @@ class User(TypedDict):
     telegram_channels: list[str]
     muted_companies: list[str]
     paused: bool
+    # Gmail OAuth — set after the user runs /connect_gmail and grants the
+    # `gmail.compose` scope. With these set, the apply flow creates a real
+    # Gmail draft (To/Subject/Body + CV attached) instead of asking the user
+    # to copy-paste. Both NULL = not connected.
+    gmail_refresh_token: str | None
+    gmail_address: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -287,6 +293,19 @@ _MIGRATIONS: list[tuple[int, str]] = [
         # NULL until the first extraction succeeds.
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS cv_profile JSONB;",
     ),
+    (
+        4,
+        # Gmail OAuth credentials per user. With these set the apply flow
+        # creates a real Gmail draft in the user's account (Body + CV PDF
+        # attached) instead of asking them to copy-paste. We store only the
+        # refresh_token — access tokens are short-lived and re-minted on
+        # demand. `gmail_address` is the Google-confirmed `From` so the
+        # "Open Gmail drafts" deep link picks the right account.
+        """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS gmail_refresh_token TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS gmail_address TEXT;
+        """,
+    ),
 ]
 
 
@@ -367,6 +386,8 @@ _USER_UPDATABLE = frozenset(
         "telegram_channels",
         "muted_companies",
         "paused",
+        "gmail_refresh_token",
+        "gmail_address",
     }
 )
 

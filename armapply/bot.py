@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from armapply import apply as apply_mod
-from armapply import db, telegram_api
+from armapply import db, gmail_api, telegram_api
 
 log = logging.getLogger(__name__)
 
@@ -159,6 +159,8 @@ _HELP = (
     "Send me a PDF résumé to start. Then:\n"
     "  `/name Narek Kolyan`  (your name — used in cover letters)\n"
     "  `/email you@gmail.com`  (Reply-To address for apply emails)\n"
+    "  `/connect_gmail`  hook up your Gmail so Apply creates real drafts\n"
+    "  `/disconnect_gmail`  revoke the stored Gmail token\n"
     "  `/cv`  show CV info / `/cv preview` show first lines\n"
     "  `/profile`  show parsed CV / `/profile rebuild` to re-parse\n"
     "  `/skills` list, `/skills add a, b`, `/skills remove a`\n"
@@ -402,11 +404,17 @@ def _cmd_me(user: db.User, _rest: str) -> None:
     assert fresh is not None
     from armapply.config import settings as _settings
     smtp_status = "✅ ready" if _settings().smtp_configured else "❌ not configured (auto-apply disabled)"
+    gmail_status = (
+        f"✅ {fresh.get('gmail_address')}"
+        if fresh.get("gmail_refresh_token")
+        else "❌ not connected — /connect_gmail to use drafts"
+    )
     lines = [
         f"*Your settings*",
         f"Name: {fresh['name'] or '— set with /name'}",
         f"Email: {fresh['email'] or '— set with /email'}",
         f"CV: {'✅ loaded' if fresh['cv_text'] else '❌ missing — send a PDF'}",
+        f"Gmail draft: {gmail_status}",
         f"SMTP: {smtp_status}",
         f"Queries: {', '.join(fresh['queries']) or '—'}",
         f"Locations: {', '.join(fresh['locations']) or '—'}",
@@ -419,6 +427,52 @@ def _cmd_me(user: db.User, _rest: str) -> None:
         f"Paused: {'yes' if fresh['paused'] else 'no'}",
     ]
     telegram_api.send_message(user["tg_chat_id"], "\n".join(lines))
+
+
+def _cmd_connect_gmail(user: db.User, _rest: str) -> None:
+    """Send the user the OAuth consent URL. Clicking it opens Google's
+    consent screen; on grant we get redirected to /oauth/google/callback
+    and bind the refresh_token to this chat."""
+    from armapply.config import settings as _settings
+
+    if not _settings().gmail_oauth_configured:
+        raise CommandError(
+            "Gmail OAuth isn't configured on this deployment. "
+            "Admin: set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / APP_URL."
+        )
+    try:
+        url = gmail_api.make_oauth_url(user["tg_chat_id"])
+    except gmail_api.GmailNotConnected as e:
+        raise CommandError(str(e))
+    fresh = db.get_user(user["id"])
+    current = fresh and fresh.get("gmail_address")
+    note = (
+        f"Currently connected as {current}. Re-authorizing will replace it.\n\n"
+        if current
+        else ""
+    )
+    telegram_api.send_message(
+        user["tg_chat_id"],
+        f"{note}🔐 *Connect Gmail* (valid 10 min):\n{url}\n\n"
+        "After granting access I'll create real Gmail drafts on Apply — with "
+        "your CV attached — ready for you to review and send.",
+        parse_mode="Markdown",
+        disable_web_page_preview=True,
+    )
+
+
+def _cmd_disconnect_gmail(user: db.User, _rest: str) -> None:
+    fresh = db.get_user(user["id"])
+    if not fresh or not fresh.get("gmail_refresh_token"):
+        telegram_api.send_message(user["tg_chat_id"], "ℹ️ Gmail isn't connected.")
+        return
+    db.update_user(user["id"], gmail_refresh_token=None, gmail_address=None)
+    telegram_api.send_message(
+        user["tg_chat_id"],
+        "🔓 Gmail disconnected. (Also revoke at "
+        "https://myaccount.google.com/permissions if you want to be thorough.)",
+        disable_web_page_preview=True,
+    )
 
 
 def _cmd_run(user: db.User, _rest: str) -> None:
@@ -455,6 +509,8 @@ _COMMANDS = {
     "/resume": _cmd_resume,
     "/me": _cmd_me,
     "/run": _cmd_run,
+    "/connect_gmail": _cmd_connect_gmail,
+    "/disconnect_gmail": _cmd_disconnect_gmail,
 }
 
 
@@ -545,6 +601,24 @@ def _handle_callback(cb: IncomingCallback) -> None:
         telegram_api.answer_callback(cb.callback_id, "Error — try again.", show_alert=True)
 
 
+def _draft_template_text(result: apply_mod.ApplyResult) -> str:
+    """One Telegram-friendly code block containing the entire draft email.
+
+    Mobile UX: long-press the block → Copy → paste into any email app.
+    Wrapping everything in a single fence keeps it to one tap on mobile and
+    one click on desktop. No Markdown is parsed inside ``` blocks so we
+    don't need to escape the body.
+    """
+    to_line = f"To: {result.to_email}" if result.to_email else "To: <add recruiter email>"
+    lines = [
+        to_line,
+        f"Subject: {result.subject}",
+        "",
+        result.body.strip(),
+    ]
+    return "```\n" + "\n".join(lines) + "\n```"
+
+
 def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     if job["status"] == "applied":
         telegram_api.answer_callback(cb.callback_id, "Already applied.")
@@ -563,21 +637,50 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         )
         return
 
-    # deep_link path: build a pre-filled Gmail compose URL so the user can
-    # send manually with one tap. CV PDF is forwarded as a separate Telegram
-    # document message (Gmail's compose URL can't attach files).
+    if result.outcome == "gmail_draft":
+        # Real draft now sits in the user's Gmail account with the CV
+        # attached. They review + send from Gmail; we deep-link them
+        # straight there with `/u/<email>/` so multi-account folks land
+        # in the right inbox.
+        drafts_url = gmail_api.drafts_url(result.gmail_address)
+        recipient_note = (
+            f"to `{_md_escape(result.to_email)}`"
+            if result.to_email
+            else "(add the recruiter email before sending)"
+        )
+        telegram_api.answer_callback(cb.callback_id, "Draft created.")
+        telegram_api.edit_message_text(
+            cb.chat_id, cb.message_id,
+            _match_message(job)
+            + f"\n\n📝 *Draft in Gmail* — {recipient_note}. CV attached. "
+              "Open Gmail to review and send.",
+            reply_markup={"inline_keyboard": [
+                [{"text": "📬 Open Gmail drafts", "url": drafts_url}],
+                [{"text": "🔗 Open listing", "url": job["url"]}],
+            ]},
+            parse_mode="Markdown",
+        )
+        return
+
+    # deep_link path: hand the user a one-tap-copyable draft + the CV
+    # attached as a Telegram document, so they can forward the whole
+    # application from any email client (mobile included, where the Gmail
+    # compose URL is awkward). A Gmail compose URL is still offered for the
+    # desktop fast-path.
     compose_url = apply_mod.gmail_compose_url(
         to=result.to_email, subject=result.subject, body=result.body,
     )
     missing_recipient = not result.to_email
     note = (
-        "✏️ *Add the recruiter email* in the To: field, then send."
+        "✏️ *Add the recruiter email* — none on the listing. Draft + CV "
+        "below; paste into your email app."
         if missing_recipient
-        else "📧 *Compose tab pre-filled.* Attach the CV (sent below) and click Send."
+        else "📝 *Draft ready.* Tap-hold the block below to copy, paste it "
+        "into your email app, attach the CV sent next."
     )
     telegram_api.answer_callback(
         cb.callback_id,
-        "Add recipient" if missing_recipient else "Open Gmail",
+        "Add recipient" if missing_recipient else "Draft ready",
     )
     telegram_api.edit_message_text(
         cb.chat_id, cb.message_id,
@@ -588,17 +691,31 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         ]},
         parse_mode="Markdown",
     )
-    # Forward the user's CV PDF so they can attach it in one tap.
+    # 1. Ready-to-paste draft (To / Subject / Body) in a single code block.
+    try:
+        telegram_api.send_message(
+            cb.chat_id,
+            _draft_template_text(result),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        log.exception("draft send failed for user=%d job=%d", user["id"], job["id"])
+    # 2. CV PDF as a document — recruiter-ready filename + caption nudge.
     if user["cv_pdf"]:
         try:
             telegram_api.send_document(
                 cb.chat_id,
                 filename=user["cv_pdf_filename"] or "cv.pdf",
                 content=bytes(user["cv_pdf"]),
-                caption="Attach this to the Gmail draft above.",
+                caption="📎 Attach this to the draft above.",
             )
         except Exception:
             log.exception("send_document failed for user=%d job=%d", user["id"], job["id"])
+    else:
+        telegram_api.send_message(
+            cb.chat_id,
+            "⚠️ No CV stored — send a PDF first (then re-tap Apply).",
+        )
 
 
 def _cb_skip(user: db.User, job: db.Job, cb: IncomingCallback) -> None:

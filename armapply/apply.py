@@ -1,12 +1,17 @@
 """Apply to a job.
 
-Email transport is *stubbed* for now: `apply_to_job` always writes a row to
-the `applies` table with status='queued' (or 'deep_link' when no recruiter
-email is known). A real transport (Resend / SMTP / etc.) plugs into
-`_send_email` later — everything else stays the same.
+Three transports, picked in priority order per call:
+  1. **Gmail Drafts API** (preferred) — user ran /connect_gmail, so we
+     drop a real draft into their account with the CV attached. They
+     review + send from their own Gmail.
+  2. **SMTP** — legacy single-bot-address path. Fires the email
+     immediately if GMAIL_ADDRESS/GMAIL_APP_PASSWORD are set.
+  3. **deep_link** — fallback when neither is configured or recipient
+     unknown. Bot hands the user a pre-filled Gmail compose URL + the
+     CV as a Telegram document.
 
-Calling code should treat the return value as authoritative for what to tell
-the user: either "queued for send" or "no email, here's a deep link".
+Calling code should treat the `outcome` field as authoritative for what
+to tell the user.
 """
 
 from __future__ import annotations
@@ -18,13 +23,13 @@ from email.message import EmailMessage
 from typing import Literal
 from urllib.parse import urlencode
 
-from armapply import db
+from armapply import db, gmail_api
 from armapply.config import settings
 
 log = logging.getLogger(__name__)
 
 
-ApplyOutcome = Literal["sent", "deep_link"]
+ApplyOutcome = Literal["sent", "deep_link", "gmail_draft"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +39,10 @@ class ApplyResult:
     to_email: str | None
     subject: str
     body: str
+    # Populated only when outcome == "gmail_draft" — used by the bot to
+    # link the user straight to the right Gmail account's Drafts folder.
+    gmail_draft_id: str | None = None
+    gmail_address: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -64,11 +73,45 @@ def _subject(job: db.Job) -> str:
     return f"Application: {title}" + (f" — {company}" if company else "")
 
 
-def _body(job: db.Job, cover_letter: str, applicant_email: str | None) -> str:
-    parts = [cover_letter.strip()]
+def _salutation(job: db.Job) -> str:
+    """A salutation that uses the company name when we have one — softer than
+    'Dear Hiring Manager' and avoids the generic recruiter-spam smell."""
+    company = (job["company"] or "").strip()
+    if company:
+        return f"Hi {company} team,"
+    return "Hi there,"
+
+
+def _signature(applicant_name: str | None, applicant_email: str | None) -> str:
+    """Sign-off block. Name on first line (recruiter-friendly), email below."""
+    lines: list[str] = ["Best,"]
+    if applicant_name:
+        lines.append(applicant_name.strip())
     if applicant_email:
-        parts.append(f"\n\nBest regards,\n{applicant_email}")
-    parts.append(f"\n\n— Application sent regarding: {job['url']}")
+        lines.append(applicant_email.strip())
+    return "\n".join(lines)
+
+
+def _body(
+    job: db.Job,
+    cover_letter: str,
+    applicant_name: str | None,
+    applicant_email: str | None,
+) -> str:
+    """Assemble the full email body: salutation + cover + sign-off + ref.
+
+    The cover letter from the LLM has no salutation or sign-off — we own
+    those bookends so wording stays consistent across applications.
+    """
+    parts: list[str] = [
+        _salutation(job),
+        "",
+        cover_letter.strip(),
+        "",
+        _signature(applicant_name, applicant_email),
+    ]
+    parts.append("")
+    parts.append(f"— Re: {job['url']}")
     return "\n".join(parts)
 
 
@@ -141,12 +184,23 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
         raise ValueError(f"job {job['id']} has no cover letter; generate one first")
 
     subject = _subject(job)
-    body = _body(job, job["cover_letter"], user["email"])
+    body = _body(job, job["cover_letter"], user["name"], user["email"])
     to_email = job["recruiter_email"]
 
-    # Decide outcome up front: SMTP not configured OR no recruiter email → deep_link.
-    can_send = bool(to_email) and settings().smtp_configured
-    outcome: ApplyOutcome = "sent" if can_send else "deep_link"
+    # Transport selection. Gmail draft beats SMTP because the draft lives
+    # in the user's own account (right From:, reviewable, fewer deliver-
+    # ability issues). SMTP only fires if a bot-shared inbox is configured
+    # AND we have a recipient. Everything else falls through to deep_link.
+    has_gmail_draft = bool(user.get("gmail_refresh_token"))
+    can_smtp_send = bool(to_email) and settings().smtp_configured and not has_gmail_draft
+
+    initial_status: str
+    if has_gmail_draft:
+        initial_status = "queued"
+    elif can_smtp_send:
+        initial_status = "queued"
+    else:
+        initial_status = "deep_link"
 
     row = db.query(
         """
@@ -160,15 +214,57 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
             to_email,
             subject,
             body,
-            user["cv_pdf"] if to_email else None,
-            "queued" if can_send else "deep_link",
+            # Persist the CV bytes on the apply row whenever a transport
+            # might use them — that's "anything but pure deep_link". Lets
+            # us re-create the draft later from the row alone if needed.
+            user["cv_pdf"] if initial_status != "deep_link" else None,
+            initial_status,
         ),
         fetch="one",
     )
     assert row is not None
     apply_id = int(row["id"])
 
-    if can_send:
+    # --- Path 1: Gmail Drafts API (preferred when connected) ----------------
+    if has_gmail_draft:
+        try:
+            draft_id = gmail_api.create_draft(
+                refresh_token=user["gmail_refresh_token"] or "",
+                from_addr=user.get("gmail_address") or user["email"] or "",
+                to=to_email,
+                subject=subject,
+                body=body,
+                cv_pdf=user["cv_pdf"],
+                cv_filename=user["cv_pdf_filename"],
+            )
+        except gmail_api.GmailDraftError as e:
+            log.warning("Gmail draft failed for user=%d job=%d: %s",
+                        user["id"], job["id"], e)
+            # Fall back to the deep_link path so the dealer can still act —
+            # don't fail the whole apply because Gmail blipped.
+            db.query(
+                "UPDATE applies SET status = 'deep_link', error = %s WHERE id = %s",
+                (str(e)[:1000], apply_id),
+            )
+            db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+            return ApplyResult(
+                outcome="deep_link", apply_id=apply_id, to_email=to_email,
+                subject=subject, body=body,
+            )
+        db.query(
+            "UPDATE applies SET status = 'sent', sent_at = NOW() WHERE id = %s",
+            (apply_id,),
+        )
+        db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+        return ApplyResult(
+            outcome="gmail_draft", apply_id=apply_id, to_email=to_email,
+            subject=subject, body=body,
+            gmail_draft_id=draft_id,
+            gmail_address=user.get("gmail_address"),
+        )
+
+    # --- Path 2: SMTP send (legacy single-inbox flow) -----------------------
+    if can_smtp_send:
         try:
             _send_email(
                 to_email=to_email or "",
@@ -203,7 +299,7 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
         return ApplyResult(outcome="sent", apply_id=apply_id, to_email=to_email,
                            subject=subject, body=body)
 
-    # No recruiter email, or SMTP not configured — record as deep_link.
+    # --- Path 3: deep_link (no transport configured / no recipient) ---------
     db.update_job(job["id"], status="applied", applied_at=db.utcnow())
     return ApplyResult(outcome="deep_link", apply_id=apply_id, to_email=to_email,
                        subject=subject, body=body)
