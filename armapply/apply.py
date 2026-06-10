@@ -43,6 +43,9 @@ class ApplyResult:
     # link the user straight to the right Gmail account's Drafts folder.
     gmail_draft_id: str | None = None
     gmail_address: str | None = None
+    # Set when the user's Gmail refresh token was rejected and we fell back
+    # to deep_link. Bot prompts the user to /connect_gmail.
+    needs_gmail_reauth: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +243,11 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
         except gmail_api.GmailDraftError as e:
             log.warning("Gmail draft failed for user=%d job=%d: %s",
                         user["id"], job["id"], e)
+            needs_reauth = isinstance(e, gmail_api.GmailReauthRequired)
+            if needs_reauth:
+                # Token is dead — wipe it so future applies skip the Gmail
+                # path entirely instead of round-tripping to Google each time.
+                db.update_user(user["id"], gmail_refresh_token=None)
             # Fall back to the deep_link path so the dealer can still act —
             # don't fail the whole apply because Gmail blipped.
             db.query(
@@ -250,6 +258,7 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
             return ApplyResult(
                 outcome="deep_link", apply_id=apply_id, to_email=to_email,
                 subject=subject, body=body,
+                needs_gmail_reauth=needs_reauth,
             )
         db.query(
             "UPDATE applies SET status = 'sent', sent_at = NOW() WHERE id = %s",

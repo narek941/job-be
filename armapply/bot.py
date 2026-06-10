@@ -690,9 +690,16 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         else "📝 *Draft ready.* Tap-hold the block below to copy, paste it "
         "into your email app, attach the CV sent next."
     )
+    if result.needs_gmail_reauth:
+        note = (
+            "🔌 *Gmail disconnected* — your token expired or scopes changed. "
+            "Run /connect\\_gmail to restore one-tap drafts.\n\n" + note
+        )
     telegram_api.answer_callback(
         cb.callback_id,
-        "Add recipient" if missing_recipient else "Draft ready",
+        "Reconnect Gmail" if result.needs_gmail_reauth
+        else "Add recipient" if missing_recipient
+        else "Draft ready",
     )
     telegram_api.edit_message_text(
         cb.chat_id, cb.message_id,

@@ -70,6 +70,14 @@ class GmailDraftError(RuntimeError):
     """Wraps any Google API failure during draft creation."""
 
 
+class GmailReauthRequired(GmailDraftError):
+    """Refresh token is no longer valid — user must run /connect_gmail again.
+
+    Raised on `invalid_grant` (revoked/expired) and `invalid_scope` (granted
+    scope set no longer matches what we ask for). The bot surfaces this so
+    the user knows to reconnect rather than just seeing a generic fallback."""
+
+
 # ---------------------------------------------------------------------------
 # OAuth state — signed, time-bounded
 # ---------------------------------------------------------------------------
@@ -117,15 +125,32 @@ def make_oauth_url(chat_id: int) -> str:
     Google return a refresh_token. Without `prompt=consent`, a returning
     user who already granted scopes is redirected back with NO refresh
     token — and we have nothing to persist.
+
+    Pre-flight validation: catch a misconfigured `APP_URL` here so the
+    user gets a clear Telegram error instead of Google's opaque
+    'Error 400: invalid_request' with no parameter named.
     """
     s = settings()
     if not s.gmail_oauth_configured:
         raise GmailNotConnected("Gmail OAuth env vars are missing.")
+    redirect_uri = s.gmail_redirect_uri
+    if not redirect_uri.startswith(("http://", "https://")):
+        raise GmailNotConnected(
+            f"APP_URL must include a scheme (got {s.app_url!r}). "
+            "Set APP_URL=https://your-domain.com (or http://localhost:8000 "
+            "for local dev), then redeploy."
+        )
+    if not s.google_client_id.endswith(".apps.googleusercontent.com"):
+        raise GmailNotConnected(
+            "GOOGLE_CLIENT_ID looks malformed — expected a value ending in "
+            "`.apps.googleusercontent.com`. Re-copy it from Cloud Console "
+            "→ APIs & Services → Credentials → your OAuth client."
+        )
     from urllib.parse import urlencode
 
     params = {
         "client_id": s.google_client_id,
-        "redirect_uri": s.gmail_redirect_uri,
+        "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": " ".join(SCOPES),
         "access_type": "offline",
@@ -133,7 +158,12 @@ def make_oauth_url(chat_id: int) -> str:
         "prompt": "consent",
         "state": make_state(chat_id),
     }
-    return f"{_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
+    url = f"{_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
+    # Log the redirect_uri (NOT the full URL — state token bloats it) so
+    # ops can grep for what we sent vs. what's registered in the Console.
+    log.info("OAuth start chat=%s redirect_uri=%s client_suffix=%s",
+             chat_id, redirect_uri, s.google_client_id[-12:])
+    return url
 
 
 def exchange_code(code: str) -> tuple[str, str]:
@@ -191,23 +221,32 @@ def exchange_code(code: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def _credentials(refresh_token: str):  # type: ignore[no-untyped-def]
+    from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request as GoogleAuthRequest
     from google.oauth2.credentials import Credentials
 
     s = settings()
+    # Intentionally omit `scopes=` — when set, google-auth forwards them as
+    # the `scope` param on refresh, and Google returns `invalid_scope` if the
+    # current SCOPES list isn't a subset of what the refresh token was
+    # originally granted (e.g. user connected before we added `openid`).
+    # Without it, refresh succeeds against whatever was granted; we only
+    # use `gmail.compose` from that grant, which is the narrowest scope we ask
+    # for, so a smaller granted set still works.
     creds = Credentials(
         token=None,
         refresh_token=refresh_token,
         token_uri=_OAUTH_TOKEN_URL,
         client_id=s.google_client_id,
         client_secret=s.google_client_secret,
-        scopes=SCOPES,
     )
-    # google-auth lazily refreshes on .refresh(); the discovery client
-    # below does it automatically on the first request, but we refresh
-    # eagerly so a permission error surfaces here (clearer log line)
-    # rather than buried inside a googleapiclient stack trace.
-    creds.refresh(GoogleAuthRequest())
+    try:
+        creds.refresh(GoogleAuthRequest())
+    except RefreshError as e:
+        # `invalid_grant` = revoked/expired; `invalid_scope` = scope mismatch
+        # that omitting scopes above didn't catch (rare, e.g. a scope was
+        # disabled in GCP). Either way the user has to reconnect.
+        raise GmailReauthRequired(f"Gmail token refresh failed: {e}") from e
     return creds
 
 
