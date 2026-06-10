@@ -26,10 +26,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import mimetypes
 import time
 from email.message import EmailMessage
+from typing import Literal
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -332,12 +335,157 @@ def create_draft(
     return draft_id
 
 
-def drafts_url(gmail_address: str | None) -> str:
-    """Deep link to the user's Gmail Drafts folder.
+def _mail_account_path(gmail_address: str | None) -> str:
+    if gmail_address:
+        return f"/mail/u/{gmail_address}"
+    return "/mail/u/0"
+
+
+def web_compose_url(*, to: str | None, subject: str, body: str) -> str:
+    """Desktop/mobile-web Gmail compose URL with subject + body pre-filled."""
+    params: dict[str, str] = {
+        "view": "cm",
+        "fs": "1",
+        "su": subject[:200],
+        "body": body[:6000],
+    }
+    if to:
+        params["to"] = to
+    return "https://mail.google.com/mail/?" + urlencode(params)
+
+
+def _app_compose_params(*, to: str | None, subject: str, body: str) -> dict[str, str]:
+    params: dict[str, str] = {
+        "subject": subject[:200],
+        "body": body[:6000],
+    }
+    if to:
+        params["to"] = to
+    return params
+
+
+def app_compose_url(*, to: str | None, subject: str, body: str) -> str:
+    """Native Gmail compose deep link (iOS and fallback)."""
+    return "googlegmail:///co?" + urlencode(_app_compose_params(to=to, subject=subject, body=body))
+
+
+def app_compose_intent(*, to: str | None, subject: str, body: str, fallback_web: str) -> str:
+    """Android intent URI that opens the Gmail app compose screen."""
+    qs = urlencode(_app_compose_params(to=to, subject=subject, body=body))
+    fallback = quote(fallback_web, safe="")
+    return (
+        f"intent://co?{qs}#Intent;scheme=googlegmail;"
+        f"package=com.google.android.gm;S.browser_fallback_url={fallback};end"
+    )
+
+
+def app_gmail_url() -> str:
+    """Open the native Gmail app (inbox)."""
+    return "googlegmail:///"
+
+
+def app_gmail_intent(*, fallback_web: str) -> str:
+    """Android intent URI that opens the native Gmail app."""
+    fallback = quote(fallback_web, safe="")
+    return (
+        "intent://#Intent;scheme=googlegmail;"
+        f"package=com.google.android.gm;S.browser_fallback_url={fallback};end"
+    )
+
+
+def drafts_url(gmail_address: str | None, *, draft_id: str | None = None) -> str:
+    """Web URL to the user's Gmail Drafts folder.
 
     `/u/<email>/` makes Gmail pick the right account when the user is
-    multi-signed-in; falling back to `/u/0/` is fine for single-account
-    users but might land in the wrong inbox otherwise."""
-    if gmail_address:
-        return f"https://mail.google.com/mail/u/{gmail_address}/#drafts"
-    return "https://mail.google.com/mail/u/0/#drafts"
+    multi-signed-in. When `draft_id` is set, Gmail opens that draft
+    directly (`#drafts?compose=<id>`)."""
+    base = f"https://mail.google.com{_mail_account_path(gmail_address)}/#drafts"
+    if draft_id:
+        return f"{base}?compose={draft_id}"
+    return base
+
+
+def gmail_link_url(
+    *,
+    kind: Literal["compose", "drafts"],
+    to: str | None = None,
+    subject: str = "",
+    body: str = "",
+    gmail_address: str | None = None,
+    draft_id: str | None = None,
+) -> str:
+    """URL for Telegram inline buttons.
+
+    When APP_URL is configured, returns an https redirect on our server
+    that opens the native Gmail app on mobile. Otherwise returns the
+    mail.google.com URL directly (local dev).
+    """
+    if kind == "drafts":
+        web = drafts_url(gmail_address, draft_id=draft_id)
+    else:
+        web = web_compose_url(to=to, subject=subject, body=body)
+
+    app_url = settings().app_url.rstrip("/")
+    if not app_url:
+        return web
+
+    q: dict[str, str] = {}
+    if kind == "compose":
+        if to:
+            q["to"] = to
+        if subject:
+            q["subject"] = subject[:200]
+        if body:
+            q["body"] = body[:6000]
+    else:
+        if gmail_address:
+            q["account"] = gmail_address
+        if draft_id:
+            q["draft"] = draft_id
+    return f"{app_url}/gmail/{kind}?{urlencode(q)}"
+
+
+def gmail_redirect_html(
+    web_url: str,
+    *,
+    ios_url: str | None = None,
+    android_url: str | None = None,
+    prefer_web: bool = False,
+) -> str:
+    """Minimal HTML page that opens the Gmail app on mobile, web elsewhere."""
+    web_js = json.dumps(web_url)
+    ios_js = json.dumps(ios_url or "")
+    android_js = json.dumps(android_url or "")
+    prefer_js = "true" if prefer_web else "false"
+    web_attr = quote(web_url, safe="")
+    return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Open Gmail</title>
+<style>body{{font:16px system-ui;margin:48px auto;max-width:420px;color:#222;text-align:center}}
+a{{color:#1a73e8}}</style>
+<script>
+(function(){{
+  var web = {web_js};
+  var ios = {ios_js};
+  var android = {android_js};
+  var preferWeb = {prefer_js};
+  var ua = navigator.userAgent || "";
+  var mobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  if (!mobile) {{ location.replace(web); return; }}
+  if (preferWeb) {{ location.replace(web); return; }}
+  var app = /Android/i.test(ua) ? android : ios;
+  if (app) {{
+    location.replace(app);
+    setTimeout(function() {{ location.replace(web); }}, 1200);
+  }} else {{
+    location.replace(web);
+  }}
+}})();
+</script>
+<noscript><meta http-equiv="refresh" content="0;url={web_attr}"></noscript>
+</head><body>
+<p>Opening Gmail…</p>
+<p><a href="{web_url}">Tap here if nothing happens</a></p>
+</body></html>"""

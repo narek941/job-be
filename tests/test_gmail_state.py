@@ -95,3 +95,55 @@ def test_drafts_url_picks_account() -> None:
     )
     assert gmail_api.drafts_url(None) == "https://mail.google.com/mail/u/0/#drafts"
     assert gmail_api.drafts_url("") == "https://mail.google.com/mail/u/0/#drafts"
+    assert (
+        gmail_api.drafts_url("alice@gmail.com", draft_id="d123")
+        == "https://mail.google.com/mail/u/alice@gmail.com/#drafts?compose=d123"
+    )
+
+
+def test_gmail_link_url_uses_app_redirect() -> None:
+    from armapply import gmail_api
+    from armapply.config import Settings
+
+    s = Settings(
+        database_url="postgresql://u:p@h:5432/d",
+        gemini_api_key="x",
+        gemini_model="gemini-2.0-flash",
+        telegram_bot_token="x",
+        telegram_webhook_secret="",
+        pipeline_secret="test-pipeline-secret",
+        gmail_address="",
+        gmail_app_password="",
+        google_client_id="",
+        google_client_secret="",
+        app_url="https://app.example.com",
+        worldwide_ratio_default=0.1,
+        min_score_notify_default=6,
+        min_score_auto_apply_default=8,
+    )
+    with patch("armapply.gmail_api.settings", return_value=s):
+        url = gmail_api.gmail_link_url(
+            kind="compose", to="hr@acme.com", subject="Hi", body="Hello",
+        )
+    assert url.startswith("https://app.example.com/gmail/compose?")
+    assert "to=hr%40acme.com" in url
+    assert "subject=Hi" in url
+    assert "body=Hello" in url
+
+
+def test_gmail_link_url_falls_back_without_app_url() -> None:
+    from armapply import gmail_api
+
+    with patch("armapply.gmail_api.settings", return_value=_fake_settings()):
+        url = gmail_api.gmail_link_url(kind="drafts", gmail_address="a@gmail.com", draft_id="x1")
+    assert url == "https://mail.google.com/mail/u/a@gmail.com/#drafts?compose=x1"
+
+
+def test_app_compose_url() -> None:
+    from armapply import gmail_api
+
+    url = gmail_api.app_compose_url(to="a@b.com", subject="S", body="B")
+    assert url.startswith("googlegmail:///co?")
+    assert "to=a%40b.com" in url
+    assert "subject=S" in url
+    assert "body=B" in url

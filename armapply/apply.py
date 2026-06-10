@@ -21,10 +21,10 @@ import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Literal
-from urllib.parse import urlencode
 
 from armapply import db, gmail_api
 from armapply.config import settings
+from armapply.gmail_api import web_compose_url as gmail_compose_url
 
 log = logging.getLogger(__name__)
 
@@ -51,24 +51,6 @@ class ApplyResult:
 # ---------------------------------------------------------------------------
 # Subject / body assembly
 # ---------------------------------------------------------------------------
-
-def gmail_compose_url(*, to: str | None, subject: str, body: str) -> str:
-    """Build a desktop-Gmail compose URL with subject + body pre-filled.
-
-    Attachments can't be added via URL — caller is responsible for sending
-    the CV through a separate channel (e.g. Telegram document).
-    """
-    params: dict[str, str] = {
-        "view": "cm",
-        "fs": "1",
-        # Trim body to keep total URL well under 8000 chars (browsers vary).
-        "su": subject[:200],
-        "body": body[:6000],
-    }
-    if to:
-        params["to"] = to
-    return "https://mail.google.com/mail/?" + urlencode(params)
-
 
 def _subject(job: db.Job) -> str:
     title = (job["title"] or "Application").strip()

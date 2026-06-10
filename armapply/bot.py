@@ -654,7 +654,11 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         # attached. They review + send from Gmail; we deep-link them
         # straight there with `/u/<email>/` so multi-account folks land
         # in the right inbox.
-        drafts_url = gmail_api.drafts_url(result.gmail_address)
+        drafts_url = gmail_api.gmail_link_url(
+            kind="drafts",
+            gmail_address=result.gmail_address,
+            draft_id=result.gmail_draft_id,
+        )
         recipient_note = (
             f"to `{_md_escape(result.to_email)}`"
             if result.to_email
@@ -679,8 +683,11 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     # application from any email client (mobile included, where the Gmail
     # compose URL is awkward). A Gmail compose URL is still offered for the
     # desktop fast-path.
-    compose_url = apply_mod.gmail_compose_url(
-        to=result.to_email, subject=result.subject, body=result.body,
+    compose_url = gmail_api.gmail_link_url(
+        kind="compose",
+        to=result.to_email,
+        subject=result.subject,
+        body=result.body,
     )
     missing_recipient = not result.to_email
     note = (

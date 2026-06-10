@@ -1,7 +1,9 @@
 """FastAPI entry point.
 
-Only three HTTP routes:
+Only five HTTP routes:
   GET  /health             liveness
+  GET  /gmail/compose      mobile-friendly redirect → Gmail app compose
+  GET  /gmail/drafts       mobile-friendly redirect → Gmail app drafts
   POST /telegram/webhook   Telegram pushes updates here
   POST /cron               daily orchestrator (secured by a shared secret header)
 
@@ -158,6 +160,38 @@ def oauth_google_callback(
         log.exception("post-OAuth Telegram nudge failed")
 
     return HTMLResponse(_OAUTH_OK_HTML.format(email=gmail_address))
+
+
+@app.get("/gmail/compose", response_class=HTMLResponse)
+def gmail_compose_redirect(
+    to: str = "",
+    subject: str = "",
+    body: str = "",
+) -> HTMLResponse:
+    """Open a pre-filled Gmail compose screen — native app on mobile."""
+    web = gmail_api.web_compose_url(to=to or None, subject=subject, body=body)
+    ios = gmail_api.app_compose_url(to=to or None, subject=subject, body=body)
+    android = gmail_api.app_compose_intent(
+        to=to or None, subject=subject, body=body, fallback_web=web,
+    )
+    return HTMLResponse(gmail_api.gmail_redirect_html(web, ios_url=ios, android_url=android))
+
+
+@app.get("/gmail/drafts", response_class=HTMLResponse)
+def gmail_drafts_redirect(account: str = "", draft: str = "") -> HTMLResponse:
+    """Open Gmail drafts — specific draft when ?draft= is set."""
+    acct = account or None
+    draft_id = draft or None
+    web = gmail_api.drafts_url(acct, draft_id=draft_id)
+    ios = gmail_api.app_gmail_url()
+    android = gmail_api.app_gmail_intent(fallback_web=web)
+    # A draft id only resolves via the web URL; the native app has no
+    # supported deep link to a specific draft.
+    return HTMLResponse(
+        gmail_api.gmail_redirect_html(
+            web, ios_url=ios, android_url=android, prefer_web=bool(draft_id),
+        )
+    )
 
 
 @app.post("/cron")
