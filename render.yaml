@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: armapply-api
+    name: jobfox-api
     runtime: docker
     plan: free
     healthCheckPath: /health

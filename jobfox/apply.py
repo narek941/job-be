@@ -22,9 +22,9 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Literal
 
-from armapply import db, gmail_api
-from armapply.config import settings
-from armapply.gmail_api import web_compose_url as gmail_compose_url
+from jobfox import db, gmail_api
+from jobfox.config import settings
+from jobfox.gmail_api import web_compose_url as gmail_compose_url
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +82,7 @@ def _body(
     cover_letter: str,
     applicant_name: str | None,
     applicant_email: str | None,
+    portfolio_links: list[str] | None = None,
 ) -> str:
     """Assemble the full email body: salutation + cover + sign-off + ref.
 
@@ -92,6 +93,10 @@ def _body(
         _salutation(job),
         "",
         cover_letter.strip(),
+    ]
+    if portfolio_links:
+        parts += ["", "Portfolio: " + " · ".join(portfolio_links[:5])]
+    parts += [
         "",
         _signature(applicant_name, applicant_email),
     ]
@@ -103,6 +108,18 @@ def _body(
 # ---------------------------------------------------------------------------
 # Transport (stub)
 # ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class QuotaExceeded(Exception):
+    """Weekly apply quota hit — callers show an upgrade CTA, not an error."""
+
+    tier: str
+    used: int
+    limit: int
+
+    def __str__(self) -> str:
+        return f"apply quota reached: {self.used}/{self.limit} this week on '{self.tier}'"
+
 
 class SmtpNotConfigured(RuntimeError):
     """Raised when SMTP credentials are missing — caller decides what to do."""
@@ -168,8 +185,17 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
     if not job["cover_letter"]:
         raise ValueError(f"job {job['id']} has no cover letter; generate one first")
 
+    tier = user.get("tier") or "free"
+    used = db.applies_this_week(user["id"])
+    limit = db.apply_quota(tier)
+    if used >= limit:
+        raise QuotaExceeded(tier=tier, used=used, limit=limit)
+
     subject = _subject(job)
-    body = _body(job, job["cover_letter"], user["name"], user["email"])
+    body = _body(
+        job, job["cover_letter"], user["name"], user["email"],
+        portfolio_links=user.get("portfolio_links"),
+    )
     to_email = job["recruiter_email"]
 
     # Transport selection. Gmail draft beats SMTP because the draft lives
@@ -237,6 +263,7 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
                 (str(e)[:1000], apply_id),
             )
             db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+            db.add_event(job["id"], user["id"], "applied", {"outcome": "deep_link"})
             return ApplyResult(
                 outcome="deep_link", apply_id=apply_id, to_email=to_email,
                 subject=subject, body=body,
@@ -247,6 +274,7 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
             (apply_id,),
         )
         db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+        db.add_event(job["id"], user["id"], "applied", {"outcome": "gmail_draft"})
         return ApplyResult(
             outcome="gmail_draft", apply_id=apply_id, to_email=to_email,
             subject=subject, body=body,
@@ -272,6 +300,7 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
                 (apply_id,),
             )
             db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+            db.add_event(job["id"], user["id"], "applied", {"outcome": "deep_link"})
             return ApplyResult(outcome="deep_link", apply_id=apply_id, to_email=None,
                                subject=subject, body=body)
         except Exception as e:
@@ -287,10 +316,12 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
             (apply_id,),
         )
         db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+        db.add_event(job["id"], user["id"], "applied", {"outcome": "sent"})
         return ApplyResult(outcome="sent", apply_id=apply_id, to_email=to_email,
                            subject=subject, body=body)
 
     # --- Path 3: deep_link (no transport configured / no recipient) ---------
     db.update_job(job["id"], status="applied", applied_at=db.utcnow())
+    db.add_event(job["id"], user["id"], "applied", {"outcome": "deep_link"})
     return ApplyResult(outcome="deep_link", apply_id=apply_id, to_email=to_email,
                        subject=subject, body=body)

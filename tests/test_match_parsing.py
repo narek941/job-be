@@ -1,4 +1,4 @@
-from armapply.match import _clamp_score
+from jobfox.match import _clamp_score
 
 
 def test_clamp_score_int_in_range() -> None:

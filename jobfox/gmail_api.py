@@ -36,7 +36,8 @@ from urllib.parse import quote, urlencode
 
 import httpx
 
-from armapply.config import settings
+from jobfox import branding
+from jobfox.config import settings
 
 # google-auth + googleapiclient are imported lazily inside _credentials /
 # create_draft so the module loads even on a fresh checkout where the
@@ -48,11 +49,15 @@ log = logging.getLogger(__name__)
 
 
 # `gmail.compose` is the narrowest scope that lets us create drafts AND
-# send them. `gmail.send` alone can't create drafts; `gmail.modify` is
-# wider than we need. `userinfo.email` is so we can show the user which
+# send them. `gmail.readonly` powers reply tracking (detecting recruiter
+# answers to applications) — requested together so users consent once and
+# Google reviews once. `userinfo.email` is so we can show the user which
 # Gmail account they connected (and pick the right `/u/<n>/` URL).
+# Users who granted before readonly was added simply don't get reply
+# tracking until they /connect_gmail again — the poller skips them.
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/userinfo.email",
     "openid",
 ]
@@ -167,6 +172,25 @@ def make_oauth_url(chat_id: int) -> str:
     log.info("OAuth start chat=%s redirect_uri=%s client_suffix=%s",
              chat_id, redirect_uri, s.google_client_id[-12:])
     return url
+
+
+def revoke_token(refresh_token: str | None) -> bool:
+    """Best-effort revocation at Google. Called on account deletion so the
+    grant disappears from the user's myaccount.google.com permissions list
+    instead of dangling. Returns True if Google confirmed (or token empty)."""
+    if not refresh_token:
+        return True
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+            r = client.post(
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": refresh_token},
+            )
+        # 400 = already invalid/revoked — that's the state we wanted anyway.
+        return r.status_code in (200, 400)
+    except httpx.HTTPError as e:
+        log.warning("Gmail token revocation failed: %s", e)
+        return False
 
 
 def exchange_code(code: str) -> tuple[str, str]:
@@ -351,7 +375,9 @@ def web_compose_url(*, to: str | None, subject: str, body: str) -> str:
     }
     if to:
         params["to"] = to
-    return "https://mail.google.com/mail/?" + urlencode(params)
+    # quote_via=quote: spaces must be %20, not + — the Gmail app and some
+    # web parsers treat a literal + in compose params as a plus sign.
+    return "https://mail.google.com/mail/?" + urlencode(params, quote_via=quote)
 
 
 def _app_compose_params(*, to: str | None, subject: str, body: str) -> dict[str, str]:
@@ -366,12 +392,13 @@ def _app_compose_params(*, to: str | None, subject: str, body: str) -> dict[str,
 
 def app_compose_url(*, to: str | None, subject: str, body: str) -> str:
     """Native Gmail compose deep link (iOS and fallback)."""
-    return "googlegmail:///co?" + urlencode(_app_compose_params(to=to, subject=subject, body=body))
+    qs = urlencode(_app_compose_params(to=to, subject=subject, body=body), quote_via=quote)
+    return f"googlegmail:///co?{qs}"
 
 
 def app_compose_intent(*, to: str | None, subject: str, body: str, fallback_web: str) -> str:
     """Android intent URI that opens the Gmail app compose screen."""
-    qs = urlencode(_app_compose_params(to=to, subject=subject, body=body))
+    qs = urlencode(_app_compose_params(to=to, subject=subject, body=body), quote_via=quote)
     fallback = quote(fallback_web, safe="")
     return (
         f"intent://co?{qs}#Intent;scheme=googlegmail;"
@@ -442,7 +469,7 @@ def gmail_link_url(
             q["account"] = gmail_address
         if draft_id:
             q["draft"] = draft_id
-    return f"{app_url}/gmail/{kind}?{urlencode(q)}"
+    return f"{app_url}/gmail/{kind}?{urlencode(q, quote_via=quote)}"
 
 
 def gmail_redirect_html(
@@ -462,7 +489,8 @@ def gmail_redirect_html(
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Open Gmail</title>
+<title>Open Gmail — JobFox</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <style>body{{font:16px system-ui;margin:48px auto;max-width:420px;color:#222;text-align:center}}
 a{{color:#1a73e8}}</style>
 <script>
@@ -486,6 +514,7 @@ a{{color:#1a73e8}}</style>
 </script>
 <noscript><meta http-equiv="refresh" content="0;url={web_attr}"></noscript>
 </head><body>
+{branding.logo_mark_svg(40)}
 <p>Opening Gmail…</p>
 <p><a href="{web_url}">Tap here if nothing happens</a></p>
 </body></html>"""

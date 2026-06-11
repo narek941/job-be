@@ -5,25 +5,30 @@ The bot is the *only* user interface. State machine is small:
   send PDF document            uploaded as CV
   /queries kw1, kw2, kw3       set search queries
   /locations a, b, c           set LinkedIn locations (worldwide pool)
-  /channels @c1 @c2            subscribe to telegram channels
+  /channels @c1 @c2            extra telegram channels (defaults always on)
   /worldwide 0.1               worldwide_ratio (0..1)
   /auto on|off                 toggle auto-apply
   /pause | /resume             pause/resume the daily pipeline
   /me                          show current settings
+  /stats [days]                application funnel (found/applied/interview/offer)
   /run                         run the pipeline now (debug)
 
 Plus inline-button callbacks attached to each match notification:
   ✅ Apply · ⏭ Skip · 🔕 Mute · 🔗 Link
+and, once applied, manual outcome tracking:
+  🎤 Interview · ❌ Rejected · 🎉 Offer
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
-from armapply import apply as apply_mod
-from armapply import db, gmail_api, telegram_api
+from jobfox import analytics
+from jobfox import apply as apply_mod
+from jobfox import db, discovery, gmail_api, telegram_api
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +118,15 @@ def _match_message(job: db.Job) -> str:
     )
 
 
+def _outcome_row(job_id: int) -> list[dict[str, Any]]:
+    """Manual funnel-tracking buttons, shown once a job is applied."""
+    return [
+        {"text": "🎤 Interview", "callback_data": f"interview:{job_id}"},
+        {"text": "❌ Rejected", "callback_data": f"rejected:{job_id}"},
+        {"text": "🎉 Offer", "callback_data": f"offer:{job_id}"},
+    ]
+
+
 def _match_keyboard(job: db.Job) -> dict[str, Any]:
     rows = [
         [
@@ -155,7 +169,7 @@ def handle_update(update: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 _HELP = (
-    "*ArmApply* — Armenia-first job hunter.\n\n"
+    "*JobFox* — Armenia-first job hunter.\n\n"
     "Send me a PDF résumé to start. Then:\n"
     "  `/name Narek Kolyan`  (your name — used in cover letters)\n"
     "  `/email you@gmail.com`  (Reply-To address for apply emails)\n"
@@ -165,20 +179,33 @@ _HELP = (
     "  `/profile`  show parsed CV / `/profile rebuild` to re-parse\n"
     "  `/skills` list, `/skills add a, b`, `/skills remove a`\n"
     "  `/summary <text>` overwrite the profile summary\n"
+    "  `/role Senior Frontend Engineer`  (what you're hunting for)\n"
+    "  `/salary 3000 USD`  (monthly minimum — low-ball listings score down)\n"
+    "  `/portfolio https://github.com/you`  (linked in applications)\n"
     "  `/queries frontend, react, node`\n"
     "  `/locations Yerevan, Remote`\n"
-    "  `/channels senior_frontender easy_frontend_jobs`\n"
+    "  `/channels senior_frontender easy_frontend_jobs`  (extra channels —\n"
+    "   @staffam, @Gortsiam, @bestjobinarmenia, @vgrecruitingit,\n"
+    "   @djinni\\_jobs\\_bot are always on)\n"
     "  `/worldwide 0.1`  (share of worldwide jobs)\n"
     "  `/auto on` or `/auto off`  (auto-apply when score ≥ threshold)\n"
     "  `/pause` / `/resume`\n"
     "  `/me`  show settings\n"
-    "  `/run`  run the pipeline now\n"
+    "  `/delete_me`  delete your account and all data\n"
+    "  `/stats`  your application funnel (or `/stats 7` for a week)\n"
+    "  `/run`  run the pipeline now\n\n"
+    "After you apply, tap 🎤 Interview / ❌ Rejected / 🎉 Offer on the "
+    "job card to track how it went.\n"
 )
 
 
 def _get_or_create_user(chat_id: int) -> db.User:
     existing = db.get_user_by_chat(chat_id)
-    return existing or db.create_user(chat_id)
+    if existing:
+        return existing
+    user = db.create_user(chat_id)
+    analytics.track(user["id"], "signup", {"surface": "telegram"})
+    return user
 
 
 def _handle_message(msg: IncomingMessage) -> None:
@@ -187,6 +214,7 @@ def _handle_message(msg: IncomingMessage) -> None:
     # PDF upload → CV.
     if msg.document_file_id:
         _handle_cv_upload(user, msg.document_file_id, msg.document_filename or "cv.pdf")
+        analytics.track(user["id"], "cv_uploaded", {"surface": "telegram"})
         return
 
     text = msg.text.strip()
@@ -212,7 +240,13 @@ class CommandError(Exception):
 
 
 def _cmd_start(user: db.User, _rest: str) -> None:
-    telegram_api.send_message(user["tg_chat_id"], _HELP)
+    from jobfox.config import settings as _settings
+
+    help_text = _HELP
+    app_url = _settings().app_url.rstrip("/")
+    if app_url:
+        help_text += f"\nTerms: {app_url}/terms · Privacy: {app_url}/privacy"
+    telegram_api.send_message(user["tg_chat_id"], help_text)
 
 
 def _cmd_email(user: db.User, rest: str) -> None:
@@ -225,7 +259,7 @@ def _cmd_email(user: db.User, rest: str) -> None:
 
 def _cmd_profile(user: db.User, rest: str) -> None:
     """`/profile` show, `/profile rebuild` re-extract from current cv_text."""
-    from armapply import profile as profile_mod
+    from jobfox import profile as profile_mod
 
     fresh = db.get_user(user["id"])
     assert fresh is not None
@@ -249,7 +283,7 @@ def _cmd_profile(user: db.User, rest: str) -> None:
 
 def _cmd_skills(user: db.User, rest: str) -> None:
     """`/skills` list, `/skills add a, b`, `/skills remove a`."""
-    from armapply import profile as profile_mod
+    from jobfox import profile as profile_mod
 
     fresh = db.get_user(user["id"])
     assert fresh is not None
@@ -288,7 +322,7 @@ def _cmd_skills(user: db.User, rest: str) -> None:
 
 def _cmd_summary(user: db.User, rest: str) -> None:
     """`/summary` show, `/summary <text>` replace."""
-    from armapply import profile as profile_mod
+    from jobfox import profile as profile_mod
 
     fresh = db.get_user(user["id"])
     assert fresh is not None
@@ -347,6 +381,53 @@ def _cmd_name(user: db.User, rest: str) -> None:
     telegram_api.send_message(user["tg_chat_id"], f"✅ Name: {name}")
 
 
+def _cmd_role(user: db.User, rest: str) -> None:
+    role = rest.strip()[:200]
+    if not role:
+        raise CommandError("Usage: /role Senior Frontend Engineer")
+    db.update_user(user["id"], desired_role=role)
+    telegram_api.send_message(user["tg_chat_id"], f"✅ Desired role: {role}")
+
+
+_SALARY_RE = re.compile(r"^(\d[\d,. ]*)\s*([A-Za-z]{3})?$")
+
+
+def _cmd_salary(user: db.User, rest: str) -> None:
+    rest = rest.strip()
+    if rest.lower() in {"off", "none", "clear"}:
+        db.update_user(user["id"], salary_min=None)
+        telegram_api.send_message(user["tg_chat_id"], "✅ Salary expectation cleared.")
+        return
+    m = _SALARY_RE.match(rest)
+    if not m:
+        raise CommandError(
+            "Usage: /salary 3000 USD  (monthly minimum; AMD/USD/EUR/…)\n"
+            "or /salary off to clear"
+        )
+    amount = int(re.sub(r"[,. ]", "", m.group(1)))
+    currency = (m.group(2) or user["salary_currency"] or "USD").upper()
+    db.update_user(user["id"], salary_min=amount, salary_currency=currency)
+    telegram_api.send_message(
+        user["tg_chat_id"],
+        f"✅ Minimum salary: {amount:,} {currency}/month — matches clearly "
+        "below this get scored down.",
+    )
+
+
+def _cmd_portfolio(user: db.User, rest: str) -> None:
+    links = [l.strip() for l in rest.replace(",", " ").split() if l.strip()]
+    bad = [l for l in links if not l.startswith(("http://", "https://"))]
+    if bad:
+        raise CommandError(f"Links must start with http(s):// — got {bad[0][:60]}")
+    db.update_user(user["id"], portfolio_links=links[:10])
+    msg = (
+        "✅ Portfolio links (added to your applications):\n" + "\n".join(links[:10])
+        if links
+        else "✅ Portfolio links cleared."
+    )
+    telegram_api.send_message(user["tg_chat_id"], msg, disable_web_page_preview=True)
+
+
 def _cmd_queries(user: db.User, rest: str) -> None:
     queries = [q.strip() for q in rest.split(",") if q.strip()]
     if not queries:
@@ -364,10 +445,18 @@ def _cmd_locations(user: db.User, rest: str) -> None:
 
 
 def _cmd_channels(user: db.User, rest: str) -> None:
-    channels = [c.strip().lstrip("@") for c in rest.replace(",", " ").split() if c.strip()]
-    db.update_user(user["id"], telegram_channels=channels)
-    msg = f"✅ Channels: {', '.join('@' + c for c in channels)}" if channels else "✅ Channels cleared."
-    telegram_api.send_message(user["tg_chat_id"], msg)
+    requested = [c.strip().lstrip("@") for c in rest.replace(",", " ").split() if c.strip()]
+    defaults = {discovery._tg_username(c).lower() for c in discovery.DEFAULT_TELEGRAM_CHANNELS}
+    # Defaults are always scanned — only store what the user adds on top.
+    extras = [c for c in requested if discovery._tg_username(c).lower() not in defaults]
+    db.update_user(user["id"], telegram_channels=extras)
+    lines = [
+        "📡 Default channels (always on): "
+        + ", ".join("@" + c for c in discovery.DEFAULT_TELEGRAM_CHANNELS),
+        f"✅ Extra channels: {', '.join('@' + c for c in extras)}"
+        if extras else "✅ No extra channels.",
+    ]
+    telegram_api.send_message(user["tg_chat_id"], "\n".join(lines))
 
 
 def _cmd_worldwide(user: db.User, rest: str) -> None:
@@ -402,7 +491,7 @@ def _cmd_resume(user: db.User, _rest: str) -> None:
 def _cmd_me(user: db.User, _rest: str) -> None:
     fresh = db.get_user(user["id"])
     assert fresh is not None
-    from armapply.config import settings as _settings
+    from jobfox.config import settings as _settings
     smtp_status = "✅ ready" if _settings().smtp_configured else "❌ not configured (auto-apply disabled)"
     gmail_status = (
         f"✅ {fresh.get('gmail_address')}"
@@ -416,9 +505,24 @@ def _cmd_me(user: db.User, _rest: str) -> None:
         f"CV: {'✅ loaded' if fresh['cv_text'] else '❌ missing — send a PDF'}",
         f"Gmail draft: {gmail_status}",
         f"SMTP: {smtp_status}",
+        f"Plan: {fresh['tier']}  "
+        f"({db.applies_this_week(fresh['id'])}/{db.apply_quota(fresh['tier'])} applies this week)",
+        f"Desired role: {fresh['desired_role'] or '— set with /role'}",
+        "Salary: "
+        + (
+            f"≥ {fresh['salary_min']:,} {fresh['salary_currency']}/month"
+            if fresh["salary_min"]
+            else "— set with /salary"
+        ),
+        f"Portfolio: {', '.join(fresh['portfolio_links']) or '—'}",
         f"Queries: {', '.join(fresh['queries']) or '—'}",
         f"Locations: {', '.join(fresh['locations']) or '—'}",
-        f"Channels: {', '.join('@' + c for c in fresh['telegram_channels']) or '—'}",
+        "Channels: defaults ("
+        + ", ".join("@" + c for c in discovery.DEFAULT_TELEGRAM_CHANNELS)
+        + ")" + (
+            " + " + ", ".join("@" + c for c in fresh["telegram_channels"])
+            if fresh["telegram_channels"] else ""
+        ),
         f"Muted companies: {', '.join(fresh['muted_companies']) or '—'}",
         f"Worldwide ratio: {fresh['worldwide_ratio']:.2f}",
         f"Auto-apply: {'on' if fresh['auto_apply'] else 'off'}  "
@@ -442,7 +546,7 @@ def _cmd_connect_gmail(user: db.User, _rest: str) -> None:
     Inline-keyboard `url` buttons are passed verbatim — no parsing — so
     they sidestep this entire class of bug.
     """
-    from armapply.config import settings as _settings
+    from jobfox.config import settings as _settings
 
     if not _settings().gmail_oauth_configured:
         raise CommandError(
@@ -487,10 +591,77 @@ def _cmd_disconnect_gmail(user: db.User, _rest: str) -> None:
     )
 
 
+def _cmd_stats(user: db.User, rest: str) -> None:
+    try:
+        days = max(1, min(365, int(rest))) if rest.strip() else 30
+    except ValueError:
+        raise CommandError("Usage: /stats  or  /stats 7  (days, 1-365)")
+    s = db.funnel_stats(user["id"], days=days)
+
+    def pct(num: int, den: int) -> str:
+        return f"{num / den * 100:.1f}%" if den else "—"
+
+    lines = [
+        f"📊 *Last {days} days*",
+        "",
+        f"Jobs found: {s['found']}",
+        f"Applications: {s['applied']}",
+        f"Replies: {s['replies']}",
+        f"Interviews: {s['interviews']}",
+        f"Offers: {s['offers']}",
+        f"Rejections: {s['rejections']}",
+        "",
+        f"Reply rate: {pct(s['replies'], s['applied'])}",
+        f"Interview rate: {pct(s['interviews'], s['applied'])}",
+        f"Offer rate: {pct(s['offers'], s['applied'])}",
+    ]
+    telegram_api.send_message(user["tg_chat_id"], "\n".join(lines), parse_mode="Markdown")
+
+
+def _cmd_delete_me(user: db.User, rest: str) -> None:
+    if rest.strip().lower() != "confirm":
+        telegram_api.send_message(
+            user["tg_chat_id"],
+            "⚠️ This permanently deletes your account: profile, CV, all jobs, "
+            "applications and history. Your Gmail authorization is revoked. "
+            "There is no undo.\n\n"
+            "If you're sure, send:  `/delete_me confirm`",
+            parse_mode="Markdown",
+        )
+        return
+    gmail_api.revoke_token(user.get("gmail_refresh_token"))
+    db.delete_user(user["id"])
+    telegram_api.send_message(
+        user["tg_chat_id"],
+        "🗑 Done — your account and all data are deleted. "
+        "Good luck out there; /start any time to begin fresh.",
+    )
+
+
+# /run cooldown — a /run loop would re-trigger discovery + LLM scoring on
+# every call. In-memory is fine: single-process deploy, and a restart
+# resetting the cooldown is harmless.
+_RUN_COOLDOWN_SECONDS = 15 * 60
+_last_run_at: dict[int, float] = {}
+
+
 def _cmd_run(user: db.User, _rest: str) -> None:
     # Lazy import: pipeline imports bot for notify_match; importing eagerly
     # would create a cycle at module load.
-    from armapply import pipeline
+    import time as _time
+
+    from jobfox import pipeline
+
+    last = _last_run_at.get(user["id"], 0.0)
+    wait = _RUN_COOLDOWN_SECONDS - (_time.time() - last)
+    if wait > 0:
+        telegram_api.send_message(
+            user["tg_chat_id"],
+            f"⏳ The pipeline runs daily on its own — manual /run is limited. "
+            f"Try again in {int(wait // 60) + 1} min.",
+        )
+        return
+    _last_run_at[user["id"]] = _time.time()
 
     telegram_api.send_message(user["tg_chat_id"], "🚀 Running pipeline…")
     r = pipeline.run_for_user(user)
@@ -512,6 +683,9 @@ _COMMANDS = {
     "/profile": _cmd_profile,
     "/skills": _cmd_skills,
     "/summary": _cmd_summary,
+    "/role": _cmd_role,
+    "/salary": _cmd_salary,
+    "/portfolio": _cmd_portfolio,
     "/queries": _cmd_queries,
     "/locations": _cmd_locations,
     "/channels": _cmd_channels,
@@ -520,9 +694,11 @@ _COMMANDS = {
     "/pause": _cmd_pause,
     "/resume": _cmd_resume,
     "/me": _cmd_me,
+    "/stats": _cmd_stats,
     "/run": _cmd_run,
     "/connect_gmail": _cmd_connect_gmail,
     "/disconnect_gmail": _cmd_disconnect_gmail,
+    "/delete_me": _cmd_delete_me,
 }
 
 
@@ -531,7 +707,7 @@ _COMMANDS = {
 # ---------------------------------------------------------------------------
 
 def _handle_cv_upload(user: db.User, file_id: str, filename: str) -> None:
-    from armapply import match, profile as profile_mod
+    from jobfox import match, profile as profile_mod
 
     telegram_api.send_message(user["tg_chat_id"], "📄 Reading your CV…")
     try:
@@ -638,13 +814,34 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     if not job["cover_letter"]:
         telegram_api.answer_callback(cb.callback_id, "No cover letter yet.", show_alert=True)
         return
-    result = apply_mod.apply_to_job(user, job)
+    try:
+        result = apply_mod.apply_to_job(user, job)
+    except apply_mod.QuotaExceeded as q:
+        analytics.track(user["id"], "quota_hit", {"tier": q.tier, "limit": q.limit})
+        from jobfox.config import settings as _settings
+
+        app_url = _settings().app_url.rstrip("/")
+        pricing = f"{app_url}/#pricing" if app_url else "the pricing page"
+        telegram_api.answer_callback(cb.callback_id, "Weekly apply limit reached.")
+        telegram_api.send_message(
+            cb.chat_id,
+            f"🦊 You've used all {q.limit} applies on the *{q.tier}* plan this "
+            f"week. Upgrade for more firepower: {pricing}",
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+        )
+        return
+    analytics.track(user["id"], "apply", {"outcome": result.outcome, "source": job["source"]})
     if result.outcome == "sent":
         telegram_api.answer_callback(cb.callback_id, "Email sent.")
         telegram_api.edit_message_text(
             cb.chat_id, cb.message_id,
-            _match_message(job) + f"\n\n✅ *Sent* — to `{_md_escape(result.to_email or '')}`",
-            reply_markup={"inline_keyboard": [[{"text": "🔗 Open", "url": job["url"]}]]},
+            _match_message(job) + f"\n\n✅ *Sent* — to `{_md_escape(result.to_email or '')}`"
+            "\n_Track the outcome with the buttons below._",
+            reply_markup={"inline_keyboard": [
+                _outcome_row(job["id"]),
+                [{"text": "🔗 Open", "url": job["url"]}],
+            ]},
             parse_mode="Markdown",
         )
         return
@@ -672,6 +869,7 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
               "Open Gmail to review and send.",
             reply_markup={"inline_keyboard": [
                 [{"text": "📬 Open Gmail drafts", "url": drafts_url}],
+                _outcome_row(job["id"]),
                 [{"text": "🔗 Open listing", "url": job["url"]}],
             ]},
             parse_mode="Markdown",
@@ -713,6 +911,7 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         _match_message(job) + "\n\n" + note,
         reply_markup={"inline_keyboard": [
             [{"text": "📧 Compose in Gmail", "url": compose_url}],
+            _outcome_row(job["id"]),
             [{"text": "🔗 Open listing", "url": job["url"]}],
         ]},
         parse_mode="Markdown",
@@ -744,8 +943,45 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         )
 
 
+# (emoji, headline) per manual outcome — used by _cb_outcome below.
+_OUTCOMES: dict[str, tuple[str, str]] = {
+    "interview": ("🎤", "Interview scheduled — good luck!"),
+    "rejected": ("❌", "Marked as rejected."),
+    "offer": ("🎉", "Offer received — congratulations!"),
+}
+
+
+def _cb_outcome(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
+    outcome = cb.data.partition(":")[0]
+    emoji, headline = _OUTCOMES[outcome]
+    if job["status"] == outcome:
+        telegram_api.answer_callback(cb.callback_id, f"Already marked: {outcome}.")
+        return
+    db.update_job(job["id"], status=outcome)
+    db.add_event(job["id"], user["id"], outcome)  # type: ignore[arg-type]
+    analytics.track(user["id"], "outcome_marked", {"outcome": outcome})
+    telegram_api.answer_callback(cb.callback_id, headline)
+    # Keep the other outcome buttons — an interview can still become an
+    # offer or a rejection later.
+    remaining = [
+        {"text": f"{e} {o.title()}", "callback_data": f"{o}:{job['id']}"}
+        for o, (e, _) in _OUTCOMES.items()
+        if o != outcome
+    ]
+    telegram_api.edit_message_text(
+        cb.chat_id, cb.message_id,
+        _match_message(job) + f"\n\n{emoji} *{headline}*",
+        reply_markup={"inline_keyboard": [
+            remaining,
+            [{"text": "🔗 Open", "url": job["url"]}],
+        ]},
+        parse_mode="Markdown",
+    )
+
+
 def _cb_skip(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     db.update_job(job["id"], status="skipped")
+    db.add_event(job["id"], user["id"], "skipped")
     telegram_api.answer_callback(cb.callback_id, "Skipped.")
     telegram_api.edit_message_text(
         cb.chat_id, cb.message_id, _match_message(job) + "\n\n⏭ *Skipped*",
@@ -764,6 +1000,7 @@ def _cb_mute(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
         muted.append(company)
         db.update_user(user["id"], muted_companies=muted)
     db.update_job(job["id"], status="muted")
+    db.add_event(job["id"], user["id"], "muted", {"company": company})
     telegram_api.answer_callback(cb.callback_id, f"Muted {company}.")
     telegram_api.edit_message_text(
         cb.chat_id, cb.message_id, _match_message(job) + f"\n\n🔕 *{_md_escape(company)} muted*",
@@ -776,4 +1013,7 @@ _CALLBACKS = {
     "apply": _cb_apply,
     "skip": _cb_skip,
     "mute": _cb_mute,
+    "interview": _cb_outcome,
+    "rejected": _cb_outcome,
+    "offer": _cb_outcome,
 }

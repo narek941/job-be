@@ -1,6 +1,6 @@
-# ArmApply — Product & Architecture
+# JobFox — Product & Architecture
 
-> Single source of truth for *what ArmApply is, why it exists, where the
+> Single source of truth for *what JobFox is, why it exists, where the
 > code lives, and how it actually works.* Read this before touching code
 > if you're new; skim the **Roadmap** section if you're returning.
 
@@ -27,7 +27,8 @@
 
 ## TL;DR
 
-ArmApply is a **Telegram-first AI job hunter**. A user uploads a CV once,
+JobFox is an **AI job hunter — in Telegram, on the web, and (soon) on
+mobile**. A user uploads a CV once,
 the bot ingests jobs daily from LinkedIn / staff.am / Telegram channels,
 scores fit with an LLM, writes a grounded cover letter, then — on a tap
 — drops a **real Gmail draft** (with the CV attached) into the user's
@@ -174,7 +175,7 @@ cv_tweaks). Plain text mode for cover letters.
 ## Module map
 
 ```
-armapply/
+jobfox/
 ├── main.py             FastAPI app + 3 HTTP routes (webhook, cron, oauth)
 ├── config.py           Typed Settings (env-var-driven); single source of truth
 ├── db.py               Connection, migrations, User/Job/Apply CRUD
@@ -307,7 +308,7 @@ app) plus the CV as a separate `sendDocument` attachment.
 
 ## Configuration
 
-All config flows through `armapply/config.py::Settings`. Env vars are
+All config flows through `jobfox/config.py::Settings`. Env vars are
 required unless noted.
 
 | Var | Required | Purpose |
@@ -320,7 +321,7 @@ required unless noted.
 | `PIPELINE_SECRET` | ✅ | Auth for `/cron` AND the HMAC key for OAuth state tokens |
 | `GMAIL_ADDRESS` / `GMAIL_APP_PASSWORD` | optional | Legacy SMTP transport |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | optional | Gmail OAuth (drafts) |
-| `APP_URL` | optional | Public origin used for OAuth redirect (e.g. `https://armapply-api.onrender.com`). **Origin only — code appends `/oauth/google/callback`.** |
+| `APP_URL` | optional | Public origin used for OAuth redirect (e.g. `https://jobfox-api.onrender.com`). **Origin only — code appends `/oauth/google/callback`.** |
 | `WORLDWIDE_RATIO_DEFAULT` | optional | Default for new users (0.1) |
 | `MIN_SCORE_NOTIFY_DEFAULT` | optional | 6 |
 | `MIN_SCORE_AUTO_APPLY_DEFAULT` | optional | 8 |
@@ -346,7 +347,7 @@ required unless noted.
 
 ```
 render.yaml → webservice on Render
-  python -m uvicorn armapply.main:app --host 0.0.0.0 --port $PORT
+  python -m uvicorn jobfox.main:app --host 0.0.0.0 --port $PORT
 ```
 
 - Startup runs `db.run_migrations()` — append-only `_MIGRATIONS` list
@@ -401,7 +402,8 @@ Where we are vs. real-world-deployable, in honest terms.
 
 ### ✅ Done
 
-- Telegram-first UX with all the core commands
+- Telegram bot UX with all the core commands, plus a web app (landing,
+  login, dashboard, account)
 - PDF parsing + structured profile extraction
 - Multi-source discovery (LinkedIn, staff.am, Telegram channels)
 - LLM scoring with location awareness
@@ -526,7 +528,7 @@ Ranked by what kills the business fastest.
 python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.test .env       # fill in real creds
-.venv/bin/uvicorn armapply.main:app --reload --port 8000
+.venv/bin/uvicorn jobfox.main:app --reload --port 8000
 ```
 
 For the Telegram side without a public URL, use [ngrok] or run

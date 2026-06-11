@@ -1,6 +1,9 @@
-# ArmApply
+<p align="center"><img src="jobfox/static/logo.svg" alt="JobFox" width="160"></p>
 
-Telegram-first AI job hunter. Uploads a CV once, discovers jobs daily,
+# JobFox
+
+AI job hunter — in Telegram, on the web, and (soon) on mobile.
+Uploads a CV once, discovers jobs daily,
 scores fit, drafts grounded cover letters, and drops a real Gmail draft
 (with the CV attached) into the user's own Gmail on a single tap.
 
@@ -14,7 +17,7 @@ monetization plan.
 python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp .env.test .env       # fill in real creds (see PRODUCT.md → Configuration)
-.venv/bin/uvicorn armapply.main:app --reload --port 8000
+.venv/bin/uvicorn jobfox.main:app --reload --port 8000
 .venv/bin/python -m pytest tests/ -q
 ```
 

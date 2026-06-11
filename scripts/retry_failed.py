@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from armapply.db import query, run_migrations
+from jobfox.db import query, run_migrations
 
 log = logging.getLogger("retry_failed")
 

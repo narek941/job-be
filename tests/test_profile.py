@@ -1,6 +1,6 @@
 """Tests for the pure-data profile helpers (no LLM)."""
 
-from armapply.profile import Profile, add_skills, remove_skills, render, set_summary, _sanitize
+from jobfox.profile import Profile, add_skills, remove_skills, render, set_summary, _sanitize
 
 
 def test_add_skills_dedupes_case_insensitive() -> None:

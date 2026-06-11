@@ -8,11 +8,11 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from armapply import llm
+from jobfox import llm
 
 
 def _fake_settings():
-    from armapply.config import Settings
+    from jobfox.config import Settings
     return Settings(
         database_url="postgresql://u:p@h:5432/d",
         gemini_api_key="x",
@@ -28,6 +28,9 @@ def _fake_settings():
         worldwide_ratio_default=0.1,
         min_score_notify_default=6,
         min_score_auto_apply_default=8,
+        sentry_dsn="",
+        posthog_api_key="",
+        posthog_host="",
     )
 
 
@@ -39,7 +42,7 @@ def test_complete_json_happy_path() -> None:
     response_body = {
         "candidates": [{"content": {"parts": [{"text": '{"score": 7, "reason": "ok"}'}]}}],
     }
-    with patch("armapply.llm.settings", return_value=_fake_settings()), \
+    with patch("jobfox.llm.settings", return_value=_fake_settings()), \
          patch("httpx.Client.post", return_value=_mock_response(200, response_body)):
         out = llm.complete_json(system="s", user="u")
     assert out == {"score": 7, "reason": "ok"}
@@ -49,14 +52,14 @@ def test_complete_text_happy_path() -> None:
     response_body = {
         "candidates": [{"content": {"parts": [{"text": "hello world"}]}}],
     }
-    with patch("armapply.llm.settings", return_value=_fake_settings()), \
+    with patch("jobfox.llm.settings", return_value=_fake_settings()), \
          patch("httpx.Client.post", return_value=_mock_response(200, response_body)):
         out = llm.complete(system="s", user="u")
     assert out == "hello world"
 
 
 def test_http_error_raises_llm_error() -> None:
-    with patch("armapply.llm.settings", return_value=_fake_settings()), \
+    with patch("jobfox.llm.settings", return_value=_fake_settings()), \
          patch("httpx.Client.post", return_value=_mock_response(404, {"error": "nope"})):
         with pytest.raises(llm.LLMError):
             llm.complete(system="s", user="u")
@@ -64,7 +67,7 @@ def test_http_error_raises_llm_error() -> None:
 
 def test_safety_block_raises_llm_error() -> None:
     body = {"candidates": [], "promptFeedback": {"blockReason": "SAFETY"}}
-    with patch("armapply.llm.settings", return_value=_fake_settings()), \
+    with patch("jobfox.llm.settings", return_value=_fake_settings()), \
          patch("httpx.Client.post", return_value=_mock_response(200, body)):
         with pytest.raises(llm.LLMError, match="SAFETY"):
             llm.complete(system="s", user="u")
@@ -77,16 +80,16 @@ def test_retries_on_503_then_succeeds() -> None:
         _mock_response(503, {"error": "still busy"}),
         _mock_response(200, success_body),
     ]
-    with patch("armapply.llm.settings", return_value=_fake_settings()), \
-         patch("armapply.llm.time.sleep"), \
+    with patch("jobfox.llm.settings", return_value=_fake_settings()), \
+         patch("jobfox.llm.time.sleep"), \
          patch("httpx.Client.post", side_effect=responses):
         assert llm.complete(system="s", user="u") == "OK"
 
 
 def test_gives_up_after_max_attempts() -> None:
     busy = _mock_response(503, {"error": "busy"})
-    with patch("armapply.llm.settings", return_value=_fake_settings()), \
-         patch("armapply.llm.time.sleep"), \
+    with patch("jobfox.llm.settings", return_value=_fake_settings()), \
+         patch("jobfox.llm.time.sleep"), \
          patch("httpx.Client.post", return_value=busy):
         with pytest.raises(llm.LLMError, match="503"):
             llm.complete(system="s", user="u")

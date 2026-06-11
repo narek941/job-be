@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from armapply import db, pipeline
+from jobfox import db, pipeline
 
 
 def main() -> int:

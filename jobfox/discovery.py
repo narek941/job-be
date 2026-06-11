@@ -11,7 +11,7 @@ import logging
 import math
 import re
 from typing import TYPE_CHECKING, Iterable, TypedDict
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
 import warnings
@@ -20,10 +20,10 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 # job.am serves RSS that we parse with html.parser to avoid an lxml dep.
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-from armapply import db
+from jobfox import db
 
 if TYPE_CHECKING:
-    from armapply.db import JobSource, User
+    from jobfox.db import JobSource, User
 
 log = logging.getLogger(__name__)
 
@@ -75,11 +75,84 @@ def clean_url(url: str) -> str:
     ))
 
 
+# Common obfuscations on Armenian boards & Telegram: "hr [at] acme [dot] am",
+# "hr(at)acme.am". Only bracketed forms — bare " at " is too ambiguous.
+_OBFUSCATED_AT = re.compile(r"\s*[\[\(]\s*(?:at|@)\s*[\]\)]\s*", re.I)
+_OBFUSCATED_DOT = re.compile(r"\s*[\[\(]\s*(?:dot|\.)\s*[\]\)]\s*", re.I)
+
+# Asset filenames ("logo@2x.png") match EMAIL_RE in raw scraped text.
+_FAKE_EMAIL_SUFFIXES = (
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".css", ".js",
+)
+
+# Local-part keywords. Good → likely the application inbox; bad → an address
+# that swallows applications (we'd rather return None than noreply@).
+_LOCAL_GOOD = (
+    "hr", "career", "job", "cv", "apply", "recruit", "talent",
+    "vacanc", "hiring", "staff", "resume",
+)
+_LOCAL_BAD = (
+    "noreply", "no-reply", "no_reply", "donotreply", "support",
+    "privacy", "press", "abuse", "postmaster", "webmaster", "unsubscribe",
+)
+
+# "send your CV to <email>" context, in the three languages we serve.
+_CONTEXT_WORDS = (
+    "cv", "resume", "résumé", "apply", "send", "application",
+    "ուղարկ", "դիմել", "ռեզյումե",  # hy: send, apply, resume
+    "резюме", "отправ", "присыла",  # ru: resume, send, send
+)
+
+
+def _deobfuscate(text: str) -> str:
+    return _OBFUSCATED_DOT.sub(".", _OBFUSCATED_AT.sub("@", text))
+
+
 def extract_email(text: str | None) -> str | None:
+    """Best application email in free text, or None.
+
+    Collects every candidate (after de-obfuscation), drops asset-filename
+    false positives and dead-end inboxes (noreply@ …), then ranks: HR-ish
+    local parts and "send your CV to …" context win over the first random
+    address in the page."""
     if not text:
         return None
-    m = EMAIL_RE.search(text)
-    return m.group(0).lower() if m else None
+    text = _deobfuscate(text)
+    best: str | None = None
+    best_score = -1
+    for m in EMAIL_RE.finditer(text):
+        email = m.group(0).lower()
+        if email.endswith(_FAKE_EMAIL_SUFFIXES):
+            continue
+        local = email.split("@", 1)[0]
+        if any(k in local for k in _LOCAL_BAD):
+            continue
+        score = 0
+        if any(k in local for k in _LOCAL_GOOD):
+            score += 2
+        context = text[max(0, m.start() - 80) : m.end() + 40].lower()
+        if any(k in context for k in _CONTEXT_WORDS):
+            score += 1
+        if score > best_score:  # strict > keeps first occurrence on ties
+            best, best_score = email, score
+    return best
+
+
+def email_from_mailto(node) -> str | None:
+    """First valid address in a mailto: link inside a BeautifulSoup node.
+
+    A mailto on a job page is almost always the application address, so it
+    outranks free-text extraction."""
+    if node is None:
+        return None
+    for a in node.select('a[href]'):
+        href = (a.get("href") or "").strip()
+        if not href.lower().startswith("mailto:"):
+            continue
+        addr = unquote(href[7:]).split("?", 1)[0].strip().lower()
+        if addr and EMAIL_RE.fullmatch(addr):
+            return addr
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +256,30 @@ def _staffam_list_page(client: httpx.Client, page: int) -> list[RawJob]:
     return out
 
 
+# staff.am detail pages are JS-rendered from an embedded JSON blob; both
+# the apply relay ("<slug>@e.staff.am") and the job description live there
+# and never appear in the server-side HTML. Parsing the blob is the
+# difference between ~0% and ~100% email coverage on this source.
+_STAFFAM_HR_MAIL_RE = re.compile(r'"hr_mail"\s*:\s*"([^"\\]+)"')
+# First "description" in the blob is the main job's (relJobs come later).
+# `(?:[^"\\]|\\.)*` walks over escaped quotes inside the JSON string.
+_STAFFAM_DESCRIPTION_RE = re.compile(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _staffam_json_description(page_html: str) -> str | None:
+    m = _STAFFAM_DESCRIPTION_RE.search(page_html)
+    if not m:
+        return None
+    import json as _json
+
+    try:
+        html_value = _json.loads(f'"{m.group(1)}"')  # decode \n, \", \uXXXX
+    except ValueError:
+        return None
+    text = BeautifulSoup(html_value, "html.parser").get_text("\n", strip=True)
+    return text[:8000] or None
+
+
 def _staffam_enrich(client: httpx.Client, job: RawJob) -> RawJob:
     """Fetch the detail page so we have a description + recruiter email."""
     try:
@@ -198,7 +295,18 @@ def _staffam_enrich(client: httpx.Client, job: RawJob) -> RawJob:
         or soup.select_one(".job-details-info")
     )
     description = box.get_text("\n", strip=True) if box else None
-    return {**job, "description": description, "recruiter_email": extract_email(description)}
+    # The CSS selectors above stopped matching when staff.am moved to a
+    # JS-rendered page (2026-06); the JSON blob is now the primary path.
+    description = description or _staffam_json_description(r.text)
+
+    email: str | None = None
+    m = _STAFFAM_HR_MAIL_RE.search(r.text)
+    if m:
+        candidate = m.group(1).strip().lower()
+        if EMAIL_RE.fullmatch(candidate):
+            email = candidate
+    email = email or email_from_mailto(soup) or extract_email(description)
+    return {**job, "description": description, "recruiter_email": email}
 
 
 def discover_staffam(_queries: Iterable[str], *, max_pages: int = 5, enrich_top: int = 30) -> list[RawJob]:
@@ -243,12 +351,6 @@ def discover_staffam(_queries: Iterable[str], *, max_pages: int = 5, enrich_top:
 JOBAM_FEED = "https://job.am/api/jobs/feed/"
 
 
-def _jobam_strip_html(html: str | None) -> str | None:
-    if not html:
-        return None
-    return BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
-
-
 def discover_jobam(*, limit: int = 60) -> list[RawJob]:
     """Parse job.am's public RSS feed. Each item is one vacancy.
 
@@ -288,7 +390,13 @@ def discover_jobam(*, limit: int = 60) -> list[RawJob]:
             continue
         author_el = item.find("author")
         company = (author_el.get_text() or "").strip() if author_el else None
-        desc = _jobam_strip_html(item.find("description").get_text() if item.find("description") else None)
+        # Parse the description HTML once: mailto links must be checked
+        # BEFORE tag-stripping (get_text drops href attributes).
+        desc_el = item.find("description")
+        desc_html = desc_el.get_text() if desc_el else None
+        desc_soup = BeautifulSoup(desc_html, "html.parser") if desc_html else None
+        desc = desc_soup.get_text("\n", strip=True) if desc_soup else None
+        email = email_from_mailto(desc_soup) or extract_email(desc)
         out.append(RawJob(
             url=clean_url(url_text),
             source="job_am",
@@ -297,7 +405,7 @@ def discover_jobam(*, limit: int = 60) -> list[RawJob]:
             location="Armenia",
             description=desc[:8000] if desc else None,
             salary=None,
-            recruiter_email=extract_email(desc),
+            recruiter_email=email,
         ))
         if len(out) >= limit:
             break
@@ -354,7 +462,8 @@ def _myjob_enrich(client: httpx.Client, job: RawJob) -> RawJob:
         or soup.select_one("#MainContentPlaceHolder_jobPageContainer")
     )
     description = box.get_text("\n", strip=True) if box else None
-    return {**job, "description": description, "recruiter_email": extract_email(description)}
+    email = email_from_mailto(soup) or extract_email(description)
+    return {**job, "description": description, "recruiter_email": email}
 
 
 def discover_myjobam(*, enrich_top: int = 25) -> list[RawJob]:
@@ -511,6 +620,19 @@ def discover_linkedin(
 # Telegram channels
 # ---------------------------------------------------------------------------
 
+# Channels every user is subscribed to, always. /channels can only add
+# extras on top — these can never be removed. (djinni_jobs_bot is a bot,
+# not a channel: t.me/s/ has no public feed for it, so scraping yields
+# nothing — kept here so it survives if Telegram ever exposes one.)
+DEFAULT_TELEGRAM_CHANNELS: tuple[str, ...] = (
+    "staffam",
+    "Gortsiam",
+    "bestjobinarmenia",
+    "vgrecruitingit",
+    "djinni_jobs_bot",
+)
+
+
 def _tg_username(raw: str) -> str:
     s = (raw or "").strip().lstrip("@")
     s = re.sub(r"^https?://t\.me/(s/)?", "", s, flags=re.I)
@@ -542,6 +664,7 @@ def _tg_parse_page(html: str) -> list[RawJob]:
         if len(raw) < 20:
             continue
         title = raw.split("\n", 1)[0].strip()[:200] or f"Post {href.rsplit('/', 1)[-1]}"
+        email = email_from_mailto(text_el) or extract_email(raw)
         out.append(RawJob(
             url=clean_url(href),
             source="telegram",
@@ -550,8 +673,20 @@ def _tg_parse_page(html: str) -> list[RawJob]:
             location="Telegram",
             description=raw[:8000],
             salary=None,
-            recruiter_email=extract_email(raw),
+            recruiter_email=email,
         ))
+    return out
+
+
+def merged_channels(user_channels: Iterable[str]) -> list[str]:
+    """Default channels first, then user extras — deduped by username."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for ch in (*DEFAULT_TELEGRAM_CHANNELS, *user_channels):
+        name = _tg_username(ch).lower()
+        if name and name not in seen:
+            seen.add(name)
+            out.append(_tg_username(ch))
     return out
 
 
@@ -609,6 +744,23 @@ def discover_telegram(
 # Per-user orchestrator
 # ---------------------------------------------------------------------------
 
+def _email_stats(jobs: list[RawJob]) -> dict[str, int]:
+    """Email-extraction counters for one source. The rate is computed over
+    jobs that actually have a description (un-enriched listings can't have
+    an email by construction and would drown the signal)."""
+    with_desc = [j for j in jobs if j["description"]]
+    return {
+        "with_description": len(with_desc),
+        "with_email": sum(1 for j in with_desc if j["recruiter_email"]),
+    }
+
+
+# Below this rate on staff.am something is broken (the hr_mail relay is on
+# ~every detail page) — most likely they changed the embedded JSON. The
+# alarm makes that visible within one pipeline run instead of weeks later.
+_STAFFAM_EMAIL_RATE_ALARM = 0.5
+
+
 def _persist(user_id: int, jobs: Iterable[RawJob]) -> tuple[int, int]:
     """Returns (new, updated)."""
     new = updated = 0
@@ -638,7 +790,19 @@ def discover_for_user(user: "User") -> dict[str, dict[str, int]]:
     # 1) staff.am — Armenia-first, always run.
     staffam = discover_staffam(user["queries"])
     n, u = _persist(user["id"], staffam)
-    result["staff_am"] = {"discovered": len(staffam), "new": n, "updated": u}
+    result["staff_am"] = {"discovered": len(staffam), "new": n, "updated": u, **_email_stats(staffam)}
+
+    # P0 alarm: staff.am email coverage collapsing means the hr_mail JSON
+    # changed shape — applies silently degrade to deep-link without this.
+    st = result["staff_am"]
+    if st["with_description"] >= 5:
+        rate = st["with_email"] / st["with_description"]
+        if rate < _STAFFAM_EMAIL_RATE_ALARM:
+            log.error(
+                "ALARM staff.am email extraction rate %.0f%% (%d/%d) — "
+                "check _STAFFAM_HR_MAIL_RE against a live detail page",
+                rate * 100, st["with_email"], st["with_description"],
+            )
 
     # 1b) job.am — bilingual RSS feed, cheap.
     try:
@@ -647,7 +811,7 @@ def discover_for_user(user: "User") -> dict[str, dict[str, int]]:
         log.warning("job.am discovery failed: %s", e)
         jobam = []
     n, u = _persist(user["id"], jobam)
-    result["job_am"] = {"discovered": len(jobam), "new": n, "updated": u}
+    result["job_am"] = {"discovered": len(jobam), "new": n, "updated": u, **_email_stats(jobam)}
 
     # 1c) myjob.am — classic HTML board, mostly Yerevan IT.
     try:
@@ -656,28 +820,40 @@ def discover_for_user(user: "User") -> dict[str, dict[str, int]]:
         log.warning("myjob.am discovery failed: %s", e)
         myjob = []
     n, u = _persist(user["id"], myjob)
-    result["myjob_am"] = {"discovered": len(myjob), "new": n, "updated": u}
+    result["myjob_am"] = {"discovered": len(myjob), "new": n, "updated": u, **_email_stats(myjob)}
 
-    # 2) LinkedIn — capped to floor(local_pool * worldwide_ratio), bounded [0, 20].
+    # 2) LinkedIn — a default source that always runs. Capped to
+    # floor(local_pool * worldwide_ratio), bounded [5, 20] so a low ratio
+    # (or an empty local pool) can't switch LinkedIn off entirely.
     local_pool = len(staffam) + len(jobam) + len(myjob)
-    cap = max(0, min(20, math.floor(local_pool * user["worldwide_ratio"])))
+    cap = min(20, max(5, math.floor(local_pool * user["worldwide_ratio"])))
     linkedin = discover_linkedin(
         user["queries"],
         user["locations"] or ["Remote"],
         limit=cap,
     )
     n, u = _persist(user["id"], linkedin)
-    result["linkedin"] = {"discovered": len(linkedin), "new": n, "updated": u, "cap": cap}
+    result["linkedin"] = {"discovered": len(linkedin), "new": n, "updated": u, "cap": cap, **_email_stats(linkedin)}
 
-    # 3) Telegram channels — only if user subscribed to any.
-    if user["telegram_channels"]:
-        tg = discover_telegram(
-            user["telegram_channels"],
-            keywords=user["queries"],
-        )
-        n, u = _persist(user["id"], tg)
-        result["telegram"] = {"discovered": len(tg), "new": n, "updated": u}
+    # 3) Telegram channels — defaults always on, user extras on top.
+    tg = discover_telegram(
+        merged_channels(user["telegram_channels"]),
+        keywords=user["queries"],
+    )
+    n, u = _persist(user["id"], tg)
+    result["telegram"] = {"discovered": len(tg), "new": n, "updated": u, **_email_stats(tg)}
 
     total_new = sum(r.get("new", 0) for r in result.values())
     log.info("user %d: discovery complete, %d new jobs", user["id"], total_new)
+
+    # Persist per-source email-extraction rates — the first KPI of the
+    # funnel (applies can only reach humans if these stay healthy).
+    detail = " ".join(
+        f"{src}={c['with_email']}/{c['with_description']}"
+        for src, c in result.items()
+    )
+    try:
+        db.log_run(user["id"], "discovery_emails", "ok", detail)
+    except Exception:
+        log.exception("email-rate log_run failed")
     return result

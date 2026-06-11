@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 
 def _fake_settings(app_url: str = "https://app.example.com") -> object:
-    from armapply.config import Settings
+    from jobfox.config import Settings
 
     return Settings(
         database_url="postgresql://u:p@h:5432/d",
@@ -25,13 +25,16 @@ def _fake_settings(app_url: str = "https://app.example.com") -> object:
         worldwide_ratio_default=0.1,
         min_score_notify_default=6,
         min_score_auto_apply_default=8,
+        sentry_dsn="",
+        posthog_api_key="",
+        posthog_host="",
     )
 
 
 def test_gmail_compose_redirect_includes_app_scheme() -> None:
-    with patch("armapply.config.settings", return_value=_fake_settings()), \
-         patch("armapply.db.run_migrations"):
-        from armapply.main import app
+    with patch("jobfox.config.settings", return_value=_fake_settings()), \
+         patch("jobfox.db.run_migrations"):
+        from jobfox.main import app
 
         with TestClient(app) as client:
             r = client.get(
@@ -46,9 +49,9 @@ def test_gmail_compose_redirect_includes_app_scheme() -> None:
 
 
 def test_gmail_drafts_redirect_prefers_web_for_specific_draft() -> None:
-    with patch("armapply.config.settings", return_value=_fake_settings()), \
-         patch("armapply.db.run_migrations"):
-        from armapply.main import app
+    with patch("jobfox.config.settings", return_value=_fake_settings()), \
+         patch("jobfox.db.run_migrations"):
+        from jobfox.main import app
 
         with TestClient(app) as client:
             r = client.get(

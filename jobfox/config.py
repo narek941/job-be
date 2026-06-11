@@ -61,6 +61,19 @@ class Settings:
     worldwide_ratio_default: float
     min_score_notify_default: int
     min_score_auto_apply_default: int
+    # Optional trailing block — defaults keep test fixtures stable when new
+    # opt-in settings are added. Empty string = feature off.
+    # Observability:
+    sentry_dsn: str = ""
+    posthog_api_key: str = ""
+    posthog_host: str = "https://us.i.posthog.com"
+    # Stripe — all four must be set for billing; otherwise endpoints 503.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_pro: str = ""
+    stripe_price_power: str = ""
+    # Fernet key for refresh-token encryption at rest (empty = plaintext dev mode).
+    token_encryption_key: str = ""
 
     @property
     def smtp_configured(self) -> bool:
@@ -91,6 +104,23 @@ class Settings:
             worldwide_ratio_default=_env_float("WORLDWIDE_RATIO_DEFAULT", 0.1),
             min_score_notify_default=_env_int("MIN_SCORE_NOTIFY_DEFAULT", 6),
             min_score_auto_apply_default=_env_int("MIN_SCORE_AUTO_APPLY_DEFAULT", 8),
+            sentry_dsn=_env("SENTRY_DSN", ""),
+            posthog_api_key=_env("POSTHOG_API_KEY", ""),
+            posthog_host=_env("POSTHOG_HOST", "https://us.i.posthog.com"),
+            stripe_secret_key=_env("STRIPE_SECRET_KEY", ""),
+            stripe_webhook_secret=_env("STRIPE_WEBHOOK_SECRET", ""),
+            stripe_price_pro=_env("STRIPE_PRICE_PRO", ""),
+            stripe_price_power=_env("STRIPE_PRICE_POWER", ""),
+            token_encryption_key=_env("TOKEN_ENCRYPTION_KEY", ""),
+        )
+
+    @property
+    def stripe_configured(self) -> bool:
+        return bool(
+            self.stripe_secret_key
+            and self.stripe_webhook_secret
+            and self.stripe_price_pro
+            and self.stripe_price_power
         )
 
 

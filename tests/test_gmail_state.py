@@ -15,7 +15,7 @@ import pytest
 
 
 def _fake_settings(secret: str = "test-pipeline-secret"):
-    from armapply.config import Settings
+    from jobfox.config import Settings
     return Settings(
         database_url="postgresql://u:p@h:5432/d",
         gemini_api_key="x",
@@ -31,22 +31,25 @@ def _fake_settings(secret: str = "test-pipeline-secret"):
         worldwide_ratio_default=0.1,
         min_score_notify_default=6,
         min_score_auto_apply_default=8,
+        sentry_dsn="",
+        posthog_api_key="",
+        posthog_host="",
     )
 
 
 def test_state_roundtrip() -> None:
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
-    with patch("armapply.gmail_api.settings", return_value=_fake_settings()):
+    with patch("jobfox.gmail_api.settings", return_value=_fake_settings()):
         token = gmail_api.make_state(12345)
         assert gmail_api.parse_state(token) == 12345
 
 
 def test_state_rejects_tampered_payload() -> None:
     """Flipping the chat_id in a valid token must invalidate the HMAC."""
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
-    with patch("armapply.gmail_api.settings", return_value=_fake_settings()):
+    with patch("jobfox.gmail_api.settings", return_value=_fake_settings()):
         token = gmail_api.make_state(12345)
         # Swap chat_id 12345 → 99999, keep original signature
         chat_id, ts, sig = token.split(".")
@@ -57,19 +60,19 @@ def test_state_rejects_tampered_payload() -> None:
 
 def test_state_rejects_wrong_secret() -> None:
     """A token signed by a different pipeline_secret must not parse."""
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
-    with patch("armapply.gmail_api.settings", return_value=_fake_settings("secret-A")):
+    with patch("jobfox.gmail_api.settings", return_value=_fake_settings("secret-A")):
         token = gmail_api.make_state(12345)
-    with patch("armapply.gmail_api.settings", return_value=_fake_settings("secret-B")):
+    with patch("jobfox.gmail_api.settings", return_value=_fake_settings("secret-B")):
         with pytest.raises(ValueError, match="bad signature"):
             gmail_api.parse_state(token)
 
 
 def test_state_rejects_expired_token() -> None:
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
-    with patch("armapply.gmail_api.settings", return_value=_fake_settings()):
+    with patch("jobfox.gmail_api.settings", return_value=_fake_settings()):
         old_ts = int(time.time()) - 11 * 60  # 11 min old; TTL is 10 min
         payload = f"42.{old_ts}"
         sig = gmail_api._sign(payload)
@@ -79,15 +82,15 @@ def test_state_rejects_expired_token() -> None:
 
 
 def test_state_rejects_malformed_token() -> None:
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
-    with patch("armapply.gmail_api.settings", return_value=_fake_settings()):
+    with patch("jobfox.gmail_api.settings", return_value=_fake_settings()):
         with pytest.raises(ValueError, match="malformed"):
             gmail_api.parse_state("not-a-real-token")
 
 
 def test_drafts_url_picks_account() -> None:
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
     assert (
         gmail_api.drafts_url("alice@gmail.com")
@@ -102,8 +105,8 @@ def test_drafts_url_picks_account() -> None:
 
 
 def test_gmail_link_url_uses_app_redirect() -> None:
-    from armapply import gmail_api
-    from armapply.config import Settings
+    from jobfox import gmail_api
+    from jobfox.config import Settings
 
     s = Settings(
         database_url="postgresql://u:p@h:5432/d",
@@ -120,8 +123,11 @@ def test_gmail_link_url_uses_app_redirect() -> None:
         worldwide_ratio_default=0.1,
         min_score_notify_default=6,
         min_score_auto_apply_default=8,
+        sentry_dsn="",
+        posthog_api_key="",
+        posthog_host="",
     )
-    with patch("armapply.gmail_api.settings", return_value=s):
+    with patch("jobfox.gmail_api.settings", return_value=s):
         url = gmail_api.gmail_link_url(
             kind="compose", to="hr@acme.com", subject="Hi", body="Hello",
         )
@@ -132,15 +138,15 @@ def test_gmail_link_url_uses_app_redirect() -> None:
 
 
 def test_gmail_link_url_falls_back_without_app_url() -> None:
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
-    with patch("armapply.gmail_api.settings", return_value=_fake_settings()):
+    with patch("jobfox.gmail_api.settings", return_value=_fake_settings()):
         url = gmail_api.gmail_link_url(kind="drafts", gmail_address="a@gmail.com", draft_id="x1")
     assert url == "https://mail.google.com/mail/u/a@gmail.com/#drafts?compose=x1"
 
 
 def test_app_compose_url() -> None:
-    from armapply import gmail_api
+    from jobfox import gmail_api
 
     url = gmail_api.app_compose_url(to="a@b.com", subject="S", body="B")
     assert url.startswith("googlegmail:///co?")

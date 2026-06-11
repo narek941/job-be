@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, TypedDict
 
-from armapply import llm
+from jobfox import llm
 
 log = logging.getLogger(__name__)
 

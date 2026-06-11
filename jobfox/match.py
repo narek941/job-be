@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
-from armapply import db, llm
+from jobfox import db, llm
 
 log = logging.getLogger(__name__)
 
@@ -87,7 +87,12 @@ _SCORE_SYSTEM = (
     "Location is a HARD signal: a job in another country that isn't remote "
     "should never score above 6, no matter how strong the tech match. A job "
     "in the candidate's home country or fully remote keeps the location "
-    "ceiling open."
+    "ceiling open.\n\n"
+    "If the candidate states a DESIRED ROLE, a listing in a clearly "
+    "different role family caps at 5 even with skill overlap. If the "
+    "candidate states a MINIMUM SALARY and the listing's stated salary is "
+    "clearly below it, cap at 5; if the listing doesn't state a salary, "
+    "ignore the salary signal entirely."
 )
 
 
@@ -97,12 +102,20 @@ def score_job(
     *,
     candidate_name: str | None = None,
     home_locations: list[str] | None = None,
+    desired_role: str | None = None,
+    salary_expectation: str | None = None,
 ) -> ScoreResult:
     """Returns a 1-10 fit score plus a short reason."""
     locations_line = ", ".join(home_locations) if home_locations else "Remote-friendly"
     name_line = f"Candidate's name: {candidate_name}\n" if candidate_name else ""
+    role_line = f"Candidate's desired role: {desired_role}\n" if desired_role else ""
+    salary_line = (
+        f"Candidate's minimum salary expectation: {salary_expectation}\n"
+        if salary_expectation
+        else ""
+    )
     user_prompt = (
-        f"{name_line}"
+        f"{name_line}{role_line}{salary_line}"
         f"Candidate's preferred locations: {locations_line}\n\n"
         f"CV:\n{_clip(cv, 8000)}\n\n---\n\nJob:\n{_job_brief(job)}"
     )

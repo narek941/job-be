@@ -1,9 +1,9 @@
-"""Drop the legacy ArmApply v1 tables.
+"""Drop the legacy JobFox v1 tables.
 
 Destructive. Run this exactly once when switching to v2. Idempotent — running
 it again after v2 is in place is a no-op (the legacy-only tables won't exist).
 
-After dropping, call `armapply.db.run_migrations()` (the API does this at
+After dropping, call `jobfox.db.run_migrations()` (the API does this at
 startup) to create the v2 schema.
 
 Usage:
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from armapply.db import transaction
+from jobfox.db import transaction
 
 log = logging.getLogger("reset_legacy")
 

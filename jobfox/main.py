@@ -15,13 +15,25 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
-from armapply import bot, db, gmail_api, pipeline, telegram_api
-from armapply.config import settings
+from jobfox import (
+    analytics,
+    billing,
+    bot,
+    branding,
+    db,
+    gmail_api,
+    pipeline,
+    reply_tracking,
+    telegram_api,
+    web_api,
+)
+from jobfox.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -32,17 +44,28 @@ async def lifespan(app: FastAPI):
     # Validate config and run migrations up front so a misconfigured deploy
     # fails fast instead of at first request.
     _ = settings()
+    analytics.init_sentry()
     db.run_migrations()
     log.info("startup complete")
     yield
 
 
-app = FastAPI(title="ArmApply", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="JobFox", version="2.0.0", lifespan=lifespan)
+app.include_router(web_api.router)
+app.include_router(billing.router)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.get("/logo.svg", include_in_schema=False)
+def logo() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "logo.svg", media_type="image/svg+xml")
 
 
 def _verify_telegram_secret(header_value: str | None) -> None:
@@ -74,24 +97,38 @@ async def telegram_webhook(
     return {"ok": "true"}
 
 
-_OAUTH_OK_HTML = """<!doctype html><meta charset="utf-8">
-<title>Gmail connected</title>
+_LOGO_HEADER = branding.logo_mark_svg(44)
+
+_OAUTH_OK_HTML = (
+    """<!doctype html><meta charset="utf-8">
+<title>Gmail connected — JobFox</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <style>body{{font:16px system-ui;margin:48px auto;max-width:480px;color:#222}}
 .ok{{color:#0a7d28}} .hint{{color:#666;font-size:14px}}</style>
+"""
+    + _LOGO_HEADER
+    + """
 <h2 class="ok">✅ Gmail connected</h2>
 <p>You're hooked up as <code>{email}</code>.</p>
 <p class="hint">Head back to Telegram. Future "Apply" taps will create a
 real Gmail draft (with your CV attached) in your account, ready to review
 and send.</p>"""
+)
 
-_OAUTH_ERR_HTML = """<!doctype html><meta charset="utf-8">
-<title>Gmail connect failed</title>
+_OAUTH_ERR_HTML = (
+    """<!doctype html><meta charset="utf-8">
+<title>Gmail connect failed — JobFox</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <style>body{{font:16px system-ui;margin:48px auto;max-width:480px;color:#222}}
 .err{{color:#b00020}} pre{{background:#f6f6f6;padding:12px;border-radius:6px;
 white-space:pre-wrap;font-size:13px}}</style>
+"""
+    + _LOGO_HEADER
+    + """
 <h2 class="err">⚠️ Gmail connection failed</h2>
 <pre>{reason}</pre>
 <p>Re-run <code>/connect_gmail</code> in Telegram to get a fresh link.</p>"""
+)
 
 
 @app.get("/oauth/google/callback", response_class=HTMLResponse)
@@ -208,6 +245,28 @@ def cron(x_pipeline_secret: str | None = Header(default=None)) -> dict[str, Any]
             pipeline.run_all()
         except Exception:
             log.exception("daily pipeline failed")
+        # Opportunistic reply check right after discovery/apply work.
+        try:
+            reply_tracking.run_all()
+        except Exception:
+            log.exception("post-pipeline reply poll failed")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "started"}
+
+
+@app.post("/cron/replies")
+def cron_replies(x_pipeline_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    """Hourly reply-tracking trigger (same shared secret as /cron)."""
+    expected = settings().pipeline_secret
+    if not expected or x_pipeline_secret != expected:
+        raise HTTPException(status_code=403, detail="invalid pipeline secret")
+
+    def _run() -> None:
+        try:
+            reply_tracking.run_all()
+        except Exception:
+            log.exception("reply poll failed")
 
     threading.Thread(target=_run, daemon=True).start()
     return {"status": "started"}

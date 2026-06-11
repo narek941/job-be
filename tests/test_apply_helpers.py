@@ -1,6 +1,6 @@
 from urllib.parse import parse_qs, urlparse
 
-from armapply.apply import gmail_compose_url
+from jobfox.apply import gmail_compose_url
 
 
 def test_gmail_url_includes_subject_and_body() -> None:

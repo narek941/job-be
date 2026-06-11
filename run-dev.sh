@@ -8,10 +8,10 @@ if [[ -f .env.test ]]; then
   source .env.test
   set +a
 fi
-export ARMAPPLY_JWT_SECRET="${ARMAPPLY_JWT_SECRET:-armapply-test-jwt-secret-change-in-prod}"
+export JOBFOX_JWT_SECRET="${JOBFOX_JWT_SECRET:-jobfox-test-jwt-secret-change-in-prod}"
 ROOT="$(pwd)"
-export ARMAPPLY_DATA="${ARMAPPLY_DATA:-$ROOT/data}"
-mkdir -p "$ARMAPPLY_DATA"
+export JOBFOX_DATA="${JOBFOX_DATA:-$ROOT/data}"
+mkdir -p "$JOBFOX_DATA"
 if [[ ! -d .venv ]]; then
   python3 -m venv .venv
 fi
@@ -20,4 +20,4 @@ source .venv/bin/activate
 PY="${ROOT}/.venv/bin/python3"
 "$PY" -m pip install -q -r requirements.txt
 export PYTHONPATH="$ROOT"
-exec "$PY" -m uvicorn armapply.main:app --host 0.0.0.0 --port 8000 --reload
+exec "$PY" -m uvicorn jobfox.main:app --host 0.0.0.0 --port 8000 --reload

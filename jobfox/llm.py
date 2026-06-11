@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from armapply.config import settings
+from jobfox.config import settings
 
 log = logging.getLogger(__name__)
 

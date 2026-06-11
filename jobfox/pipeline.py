@@ -10,9 +10,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Iterator
 
-from armapply import apply as apply_mod
-from armapply import db, discovery, match
-from armapply.bot import notify_match  # forward decl: bot.py exports this
+from jobfox import apply as apply_mod
+from jobfox import db, discovery, match
+from jobfox.bot import notify_match  # forward decl: bot.py exports this
 
 log = logging.getLogger(__name__)
 
@@ -37,8 +37,24 @@ def _score_new_jobs(user: db.User) -> int:
     new_jobs = db.list_new_jobs(user["id"])
     if not new_jobs:
         return 0
+    # Hard per-run LLM budget: one scoring call per job, so capping jobs
+    # caps spend. Anything beyond the cap stays status='new' and gets
+    # scored on the next run — nothing is lost, just deferred.
+    max_scores = 80
+    if len(new_jobs) > max_scores:
+        log.info(
+            "user %d: %d new jobs, scoring first %d (budget cap)",
+            user["id"], len(new_jobs), max_scores,
+        )
+        new_jobs = new_jobs[:max_scores]
+
     muted = {c.lower() for c in (user["muted_companies"] or [])}
     cv = user["cv_text"] or ""
+    salary_expectation = (
+        f"{user['salary_min']} {user['salary_currency']}/month"
+        if user.get("salary_min")
+        else None
+    )
     scored = 0
     for job in new_jobs:
         company = (job["company"] or "").lower()
@@ -50,6 +66,8 @@ def _score_new_jobs(user: db.User) -> int:
                 cv, job,
                 candidate_name=user["name"],
                 home_locations=user["locations"],
+                desired_role=user.get("desired_role"),
+                salary_expectation=salary_expectation,
             )
         except Exception as e:
             log.warning("score failed user=%d job=%d: %s", user["id"], job["id"], e)
@@ -171,6 +189,16 @@ def run_for_user(user: db.User) -> UserPipelineResult:
                 apply_mod.apply_to_job(user, job)
                 result.auto_applied += 1
                 db.log_run(user["id"], "auto_apply", "ok", f"job={job['id']}")
+            except apply_mod.QuotaExceeded as q:
+                # Not an error: quota is a product boundary. Fall back to a
+                # plain notification so the match isn't lost.
+                db.log_run(user["id"], "auto_apply", "quota", str(q))
+                try:
+                    notify_match(user, job)
+                    db.update_job(job["id"], status="notified", notified_at=db.utcnow())
+                    result.notified += 1
+                except Exception as e:
+                    result.errors.append(f"notify job={job['id']}: {e}")
             except Exception as e:
                 result.errors.append(f"auto_apply job={job['id']}: {e}")
                 db.log_run(user["id"], "auto_apply", "error", f"job={job['id']} {e}"[:1000])

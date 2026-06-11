@@ -15,4 +15,4 @@ COPY . .
 
 # Expose port and start the app
 # Render provides the PORT environment variable
-CMD uvicorn armapply.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD uvicorn jobfox.main:app --host 0.0.0.0 --port ${PORT:-8000}

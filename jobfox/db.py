@@ -22,7 +22,7 @@ from urllib.parse import unquote, urlparse
 import psycopg2
 import psycopg2.extras
 
-from armapply.config import settings
+from jobfox.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -30,8 +30,22 @@ log = logging.getLogger(__name__)
 # Row types
 # ---------------------------------------------------------------------------
 
-JobStatus = Literal["new", "scored", "notified", "applied", "skipped", "muted", "failed"]
+# Lifecycle: new → scored → notified → applied → replied, then outcome
+# tracking: interview / offer / rejected — set manually (bot buttons) or
+# automatically (Gmail reply classification).
+JobStatus = Literal[
+    "new", "scored", "notified", "applied", "replied", "skipped", "muted",
+    "failed", "interview", "offer", "rejected",
+]
 ApplyStatus = Literal["queued", "sent", "failed", "deep_link"]
+# Append-only history rows in application_events. `applied`/`skipped`/
+# `muted` come from bot actions; `reply_received` from the Gmail poller;
+# `interview`/`offer`/`rejected` from the manual buttons or the reply
+# classifier (payload {"auto": true}).
+EventType = Literal[
+    "applied", "skipped", "muted", "reply_received",
+    "interview", "offer", "rejected",
+]
 JobSource = Literal["staff_am", "job_am", "myjob_am", "linkedin", "telegram"]
 
 
@@ -53,6 +67,16 @@ class User(TypedDict):
     telegram_channels: list[str]
     muted_companies: list[str]
     paused: bool
+    # Profile v2 — feed scoring and applications.
+    desired_role: str | None
+    salary_min: int | None
+    salary_currency: str
+    employment_type: str  # any | full_time | part_time | contract
+    portfolio_links: list[str]
+    # Billing. Written by the Stripe webhook / ops only.
+    tier: str  # free | pro | power
+    stripe_customer_id: str | None
+    reply_tracking: bool
     # Gmail OAuth — set after the user runs /connect_gmail and grants the
     # `gmail.compose` scope. With these set, the apply flow creates a real
     # Gmail draft (To/Subject/Body + CV attached) instead of asking the user
@@ -306,6 +330,54 @@ _MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE users ADD COLUMN IF NOT EXISTS gmail_address TEXT;
         """,
     ),
+    (
+        5,
+        # Append-only application history. One row per funnel event
+        # (applied, interview, offer, rejected, …) so /stats can compute
+        # rates over any window even after jobs.status moves on.
+        """
+        CREATE TABLE IF NOT EXISTS application_events (
+            id         SERIAL PRIMARY KEY,
+            job_id     INT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+            user_id    INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL,
+            payload    JSONB,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS app_events_user_time_idx
+            ON application_events (user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS app_events_job_idx
+            ON application_events (job_id);
+        """,
+    ),
+    (
+        6,
+        # Profile v2 (desired role, salary expectations, employment type,
+        # portfolio links — all feed scoring/applications) + billing tier.
+        # salary_min is monthly, in salary_currency. tier ∈ free|pro|power,
+        # written only by the Stripe webhook / ops — never by user PATCH.
+        """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS desired_role TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS salary_min INT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS salary_currency TEXT NOT NULL DEFAULT 'USD';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_type TEXT NOT NULL DEFAULT 'any';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS portfolio_links TEXT[] NOT NULL DEFAULT '{}';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'free';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+        """,
+    ),
+    (
+        7,
+        # Reply tracking. `replied_at`/`reply_msg_id` on the apply row stop
+        # the poller from re-detecting the same reply; `reply_tracking` is
+        # the user-level opt-out (requires the gmail.readonly grant anyway).
+        """
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_tracking BOOLEAN NOT NULL DEFAULT TRUE;
+        ALTER TABLE applies ADD COLUMN IF NOT EXISTS replied_at TIMESTAMPTZ;
+        ALTER TABLE applies ADD COLUMN IF NOT EXISTS reply_msg_id TEXT;
+        """,
+    ),
 ]
 
 
@@ -336,6 +408,12 @@ def run_migrations() -> None:
 # ---------------------------------------------------------------------------
 
 def _row_to_user(row: dict[str, Any]) -> User:
+    # Refresh tokens are encrypted at rest (see jobfox.crypto); decrypt on
+    # the way out so the rest of the codebase only ever sees plaintext.
+    if row.get("gmail_refresh_token"):
+        from jobfox import crypto
+
+        row["gmail_refresh_token"] = crypto.decrypt_token(row["gmail_refresh_token"])
     return User(**row)  # type: ignore[typeddict-item]
 
 
@@ -388,6 +466,14 @@ _USER_UPDATABLE = frozenset(
         "paused",
         "gmail_refresh_token",
         "gmail_address",
+        "desired_role",
+        "salary_min",
+        "salary_currency",
+        "employment_type",
+        "portfolio_links",
+        "tier",
+        "stripe_customer_id",
+        "reply_tracking",
     }
 )
 
@@ -401,6 +487,11 @@ def update_user(user_id: int, **fields: Any) -> None:
     # JSONB columns expect a serialized string when passed via psycopg2.
     if "cv_profile" in fields and fields["cv_profile"] is not None:
         fields["cv_profile"] = json.dumps(fields["cv_profile"])
+    # Refresh tokens are encrypted at rest.
+    if fields.get("gmail_refresh_token"):
+        from jobfox import crypto
+
+        fields["gmail_refresh_token"] = crypto.encrypt_token(fields["gmail_refresh_token"])
     assignments = ", ".join(f"{k} = %s" for k in fields)
     params = (*fields.values(), user_id)
     query(
@@ -502,6 +593,17 @@ def list_new_jobs(user_id: int) -> list[Job]:
     return [_row_to_job(dict(r)) for r in rows]
 
 
+def list_recent_jobs(user_id: int, *, limit: int = 50) -> list[Job]:
+    """Newest-first jobs for the web dashboard."""
+    rows = query(
+        "SELECT * FROM jobs WHERE user_id = %s "
+        "ORDER BY discovered_at DESC, id DESC LIMIT %s",
+        (user_id, limit),
+        fetch="all",
+    ) or []
+    return [_row_to_job(dict(r)) for r in rows]
+
+
 def list_jobs_to_notify(user_id: int, min_score: int) -> list[Job]:
     rows = query(
         "SELECT * FROM jobs WHERE user_id = %s AND status = 'scored' AND score >= %s "
@@ -510,6 +612,194 @@ def list_jobs_to_notify(user_id: int, min_score: int) -> list[Job]:
         fetch="all",
     ) or []
     return [_row_to_job(dict(r)) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Reply tracking
+# ---------------------------------------------------------------------------
+
+def list_applies_awaiting_reply(user_id: int, *, limit: int = 25) -> list[dict[str, Any]]:
+    """Apply rows worth polling Gmail for: a known recipient, no reply seen
+    yet, sent in the last 45 days (older threads are stale anyway), and the
+    job hasn't already moved past `replied` via manual tracking."""
+    rows = query(
+        """
+        SELECT a.id AS apply_id, a.job_id, a.to_email, a.created_at,
+               j.title, j.company, j.status AS job_status
+        FROM applies a
+        JOIN jobs j ON j.id = a.job_id
+        WHERE a.user_id = %s
+          AND a.to_email IS NOT NULL AND a.to_email != ''
+          AND a.replied_at IS NULL
+          AND a.created_at >= NOW() - INTERVAL '45 days'
+          AND j.status IN ('applied', 'notified')
+        ORDER BY a.created_at DESC
+        LIMIT %s
+        """,
+        (user_id, limit),
+        fetch="all",
+    ) or []
+    return [dict(r) for r in rows]
+
+
+def mark_apply_replied(apply_id: int, msg_id: str) -> None:
+    query(
+        "UPDATE applies SET replied_at = NOW(), reply_msg_id = %s WHERE id = %s",
+        (msg_id, apply_id),
+    )
+
+
+def list_users_with_gmail() -> list[User]:
+    rows = query(
+        "SELECT * FROM users WHERE gmail_refresh_token IS NOT NULL "
+        "AND reply_tracking AND NOT paused",
+        fetch="all",
+    ) or []
+    return [_row_to_user(dict(r)) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Tiers & quotas
+# ---------------------------------------------------------------------------
+
+# Applies per rolling 7-day window. Rolling (vs. calendar week) needs no
+# reset cron and can't be gamed by applying 2× around the boundary.
+TIER_APPLY_LIMITS: dict[str, int] = {"free": 5, "pro": 50, "power": 200}
+
+
+def apply_quota(tier: str) -> int:
+    return TIER_APPLY_LIMITS.get(tier, TIER_APPLY_LIMITS["free"])
+
+
+def applies_this_week(user_id: int) -> int:
+    row = query(
+        "SELECT COUNT(*) AS n FROM applies "
+        "WHERE user_id = %s AND created_at >= NOW() - INTERVAL '7 days'",
+        (user_id,),
+        fetch="one",
+    )
+    return int(row["n"]) if row else 0
+
+
+# ---------------------------------------------------------------------------
+# Data rights: export & delete
+# ---------------------------------------------------------------------------
+
+# Never exported: secrets and raw binaries. The refresh token is a live
+# credential; CV bytes would bloat the JSON (cv_text carries the content).
+_EXPORT_EXCLUDED_USER_FIELDS = frozenset({"gmail_refresh_token", "cv_pdf"})
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (bytes, memoryview)):
+        return None
+    return value
+
+
+def export_user_data(user_id: int) -> dict[str, Any]:
+    """Everything we hold about a user, JSON-serializable. GDPR-style export."""
+    user_row = query("SELECT * FROM users WHERE id = %s", (user_id,), fetch="one")
+    if user_row is None:
+        raise ValueError(f"no user {user_id}")
+    user = {
+        k: _jsonable(v)
+        for k, v in dict(user_row).items()
+        if k not in _EXPORT_EXCLUDED_USER_FIELDS
+    }
+    jobs = query(
+        "SELECT * FROM jobs WHERE user_id = %s ORDER BY id", (user_id,), fetch="all"
+    ) or []
+    applies = query(
+        "SELECT id, job_id, to_email, subject, body, status, error, created_at, sent_at "
+        "FROM applies WHERE user_id = %s ORDER BY id",
+        (user_id,),
+        fetch="all",
+    ) or []
+    events = query(
+        "SELECT id, job_id, event_type, payload, created_at "
+        "FROM application_events WHERE user_id = %s ORDER BY id",
+        (user_id,),
+        fetch="all",
+    ) or []
+    return {
+        "exported_at": utcnow().isoformat(),
+        "user": user,
+        "jobs": [{k: _jsonable(v) for k, v in dict(r).items()} for r in jobs],
+        "applies": [{k: _jsonable(v) for k, v in dict(r).items()} for r in applies],
+        "events": [{k: _jsonable(v) for k, v in dict(r).items()} for r in events],
+    }
+
+
+def delete_user(user_id: int) -> None:
+    """Hard delete. jobs/applies/events/pipeline_runs cascade via FK."""
+    query("DELETE FROM users WHERE id = %s", (user_id,))
+
+
+# ---------------------------------------------------------------------------
+# Application events (funnel history)
+# ---------------------------------------------------------------------------
+
+def add_event(
+    job_id: int,
+    user_id: int,
+    event_type: EventType,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    query(
+        "INSERT INTO application_events (job_id, user_id, event_type, payload) "
+        "VALUES (%s, %s, %s, %s)",
+        (job_id, user_id, event_type, json.dumps(payload) if payload else None),
+    )
+
+
+def list_job_events(job_id: int, user_id: int) -> list[dict[str, Any]]:
+    """Timeline for one job (ownership enforced via user_id)."""
+    rows = query(
+        "SELECT id, event_type, payload, created_at FROM application_events "
+        "WHERE job_id = %s AND user_id = %s ORDER BY created_at, id",
+        (job_id, user_id),
+        fetch="all",
+    ) or []
+    return [
+        {**dict(r), "created_at": r["created_at"].isoformat()}
+        for r in rows
+    ]
+
+
+def funnel_stats(user_id: int, *, days: int = 30) -> dict[str, int]:
+    """Counts for the /stats funnel over the trailing `days` window.
+
+    Outcome counts use DISTINCT job_id so re-tapping a button (or a future
+    reply-detector double-firing) can't inflate the numbers."""
+    row = query(
+        """
+        SELECT
+          (SELECT COUNT(*) FROM jobs
+            WHERE user_id = %(uid)s
+              AND discovered_at >= NOW() - make_interval(days => %(days)s)) AS found,
+          (SELECT COUNT(*) FROM jobs
+            WHERE user_id = %(uid)s
+              AND applied_at >= NOW() - make_interval(days => %(days)s)) AS applied,
+          (SELECT COUNT(DISTINCT job_id) FROM application_events
+            WHERE user_id = %(uid)s AND event_type = 'reply_received'
+              AND created_at >= NOW() - make_interval(days => %(days)s)) AS replies,
+          (SELECT COUNT(DISTINCT job_id) FROM application_events
+            WHERE user_id = %(uid)s AND event_type = 'interview'
+              AND created_at >= NOW() - make_interval(days => %(days)s)) AS interviews,
+          (SELECT COUNT(DISTINCT job_id) FROM application_events
+            WHERE user_id = %(uid)s AND event_type = 'offer'
+              AND created_at >= NOW() - make_interval(days => %(days)s)) AS offers,
+          (SELECT COUNT(DISTINCT job_id) FROM application_events
+            WHERE user_id = %(uid)s AND event_type = 'rejected'
+              AND created_at >= NOW() - make_interval(days => %(days)s)) AS rejections
+        """,
+        {"uid": user_id, "days": days},  # type: ignore[arg-type]
+        fetch="one",
+    )
+    assert row is not None
+    return {k: int(v) for k, v in dict(row).items()}
 
 
 # ---------------------------------------------------------------------------
