@@ -106,6 +106,8 @@ def _match_message(job: db.Job) -> str:
     email_line = (
         f"\n📧 Recruiter: `{_md_escape(job['recruiter_email'])}`"
         if job["recruiter_email"]
+        else "\n🔗 No recruiter email — direct apply link found."
+        if job.get("apply_url")
         else "\n📧 No recruiter email — apply opens the listing."
     )
     return (
@@ -913,13 +915,23 @@ def send_deep_link_card(
         body=result.body,
     )
     missing_recipient = not result.to_email
-    note = (
-        "✏️ *Add the recruiter email* — none on the listing. Draft + CV "
-        "below; paste into your email app."
-        if missing_recipient
-        else "📝 *Draft ready.* Tap-hold the block below to copy, paste it "
-        "into your email app, attach the CV sent next."
-    )
+    apply_url = job.get("apply_url") if missing_recipient else None
+    if apply_url:
+        note = (
+            "🔗 *Direct apply link found* — no recruiter email on this "
+            "post. Cover letter + CV below in case the destination wants "
+            "one pasted in."
+        )
+    elif missing_recipient:
+        note = (
+            "✏️ *Add the recruiter email* — none on the listing. Draft + CV "
+            "below; paste into your email app."
+        )
+    else:
+        note = (
+            "📝 *Draft ready.* Tap-hold the block below to copy, paste it "
+            "into your email app, attach the CV sent next."
+        )
     if result.needs_gmail_reauth:
         note = (
             "🔌 *Gmail disconnected* — your token expired or scopes changed. "
@@ -929,12 +941,18 @@ def send_deep_link_card(
         telegram_api.answer_callback(
             callback_id,
             "Reconnect Gmail" if result.needs_gmail_reauth
+            else "Apply link ready" if apply_url
             else "Add recipient" if missing_recipient
             else "Draft ready",
         )
     card_text = _match_message(job) + "\n\n" + note
+    first_row = (
+        [{"text": "✅ Apply directly", "url": apply_url}]
+        if apply_url
+        else [{"text": "📧 Compose in Gmail", "url": compose_url}]
+    )
     reply_markup = {"inline_keyboard": [
-        [{"text": "📧 Compose in Gmail", "url": compose_url}],
+        first_row,
         _outcome_row(job["id"]),
         [{"text": "🔗 Open listing", "url": job["url"]}],
     ]}

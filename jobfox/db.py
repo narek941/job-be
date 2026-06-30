@@ -99,6 +99,7 @@ class Job(TypedDict):
     description: str | None
     salary: str | None
     recruiter_email: str | None
+    apply_url: str | None
     score: int | None
     reason: str | None
     cover_letter: str | None
@@ -378,6 +379,15 @@ _MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE applies ADD COLUMN IF NOT EXISTS reply_msg_id TEXT;
         """,
     ),
+    (
+        8,
+        # Direct external apply link (e.g. an hh.ru vacancy embedded in a
+        # Telegram post) for jobs that have no recruiter_email, so the
+        # deep_link fallback card has a real destination instead of a stub.
+        """
+        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS apply_url TEXT;
+        """,
+    ),
 ]
 
 
@@ -524,24 +534,27 @@ def upsert_job(
     description: str | None,
     salary: str | None = None,
     recruiter_email: str | None = None,
+    apply_url: str | None = None,
 ) -> tuple[int, bool]:
     """Insert if new (returns id, True). If exists, refresh metadata (returns id, False)."""
     h = url_hash(url)
     row = query(
         """
         INSERT INTO jobs (user_id, url, url_hash, source, title, company, location,
-                          description, salary, recruiter_email)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                          description, salary, recruiter_email, apply_url)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (user_id, url_hash) DO UPDATE SET
             title           = COALESCE(EXCLUDED.title, jobs.title),
             company         = COALESCE(EXCLUDED.company, jobs.company),
             location        = COALESCE(EXCLUDED.location, jobs.location),
             description     = COALESCE(EXCLUDED.description, jobs.description),
             salary          = COALESCE(EXCLUDED.salary, jobs.salary),
-            recruiter_email = COALESCE(EXCLUDED.recruiter_email, jobs.recruiter_email)
+            recruiter_email = COALESCE(EXCLUDED.recruiter_email, jobs.recruiter_email),
+            apply_url       = COALESCE(EXCLUDED.apply_url, jobs.apply_url)
         RETURNING id, (xmax = 0) AS inserted
         """,
-        (user_id, url, h, source, title, company, location, description, salary, recruiter_email),
+        (user_id, url, h, source, title, company, location, description, salary,
+         recruiter_email, apply_url),
         fetch="one",
     )
     assert row is not None

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import re
-from typing import TYPE_CHECKING, Iterable, TypedDict
+from typing import TYPE_CHECKING, Iterable, NotRequired, TypedDict
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
@@ -50,6 +50,10 @@ class RawJob(TypedDict):
     description: str | None
     salary: str | None
     recruiter_email: str | None
+    # Direct external apply link (e.g. an hh.ru vacancy embedded in a
+    # Telegram post). Only set when there's no recruiter_email — other
+    # sources don't need it since their `url` already *is* the apply page.
+    apply_url: NotRequired[str | None]
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +156,24 @@ def email_from_mailto(node) -> str | None:
         addr = unquote(href[7:]).split("?", 1)[0].strip().lower()
         if addr and EMAIL_RE.fullmatch(addr):
             return addr
+    return None
+
+
+def apply_url_from_links(node) -> str | None:
+    """First external (non-t.me) http(s) link inside a BeautifulSoup node.
+
+    Used when a post has no recruiter email but links out to a job board /
+    company career page (e.g. an hh.ru vacancy embedded in a Telegram post)
+    — gives the user a real destination instead of a dead-end."""
+    if node is None:
+        return None
+    for a in node.select('a[href]'):
+        href = (a.get("href") or "").strip()
+        if not href.lower().startswith(("http://", "https://")):
+            continue
+        if urlparse(href).netloc.lower().endswith("t.me"):
+            continue  # skip self-links / other channel links
+        return href
     return None
 
 
@@ -665,6 +687,7 @@ def _tg_parse_page(html: str) -> list[RawJob]:
             continue
         title = raw.split("\n", 1)[0].strip()[:200] or f"Post {href.rsplit('/', 1)[-1]}"
         email = email_from_mailto(text_el) or extract_email(raw)
+        apply_url = None if email else apply_url_from_links(text_el)
         out.append(RawJob(
             url=clean_url(href),
             source="telegram",
@@ -674,6 +697,7 @@ def _tg_parse_page(html: str) -> list[RawJob]:
             description=raw[:8000],
             salary=None,
             recruiter_email=email,
+            apply_url=apply_url,
         ))
     return out
 
@@ -775,6 +799,7 @@ def _persist(user_id: int, jobs: Iterable[RawJob]) -> tuple[int, int]:
             description=j["description"],
             salary=j["salary"],
             recruiter_email=j["recruiter_email"],
+            apply_url=j.get("apply_url"),
         )
         if inserted:
             new += 1

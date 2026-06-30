@@ -4,6 +4,8 @@ from jobfox.discovery import (
     DEFAULT_TELEGRAM_CHANNELS,
     _STAFFAM_HR_MAIL_RE,
     _looks_non_tech,
+    _tg_parse_page,
+    apply_url_from_links,
     clean_url,
     email_from_mailto,
     extract_email,
@@ -93,6 +95,72 @@ def test_email_from_mailto() -> None:
     assert email_from_mailto(soup) == "hr@acme.am"
     assert email_from_mailto(None) is None
     assert email_from_mailto(BeautifulSoup("<p>nothing</p>", "html.parser")) is None
+
+
+def test_apply_url_from_links_returns_first_external_link() -> None:
+    soup = BeautifulSoup(
+        '<p>Apply: <a href="https://hh.ru/vacancy/123">here</a> or '
+        '<a href="https://t.me/some_channel">our channel</a></p>',
+        "html.parser",
+    )
+    assert apply_url_from_links(soup) == "https://hh.ru/vacancy/123"
+
+
+def test_apply_url_from_links_skips_mailto_and_telegram_self_links() -> None:
+    soup = BeautifulSoup(
+        '<p><a href="mailto:hr@acme.am">mail</a> '
+        '<a href="https://t.me/easy_frontend_jobs">channel</a></p>',
+        "html.parser",
+    )
+    assert apply_url_from_links(soup) is None
+    assert apply_url_from_links(None) is None
+
+
+def test_tg_parse_page_sets_apply_url_when_no_email() -> None:
+    html = (
+        '<div class="tgme_widget_message">'
+        '<a class="tgme_widget_message_date" href="https://t.me/easy_frontend_jobs/2267">'
+        "<time></time></a>"
+        '<div class="tgme_widget_message_text">'
+        "React Developer at Wildberries Bank, remote. "
+        'Apply here: <a href="https://perm.hh.ru/vacancy/134504808">link</a>'
+        "</div></div>"
+    )
+    jobs = _tg_parse_page(html)
+    assert len(jobs) == 1
+    assert jobs[0]["recruiter_email"] is None
+    assert jobs[0]["apply_url"] == "https://perm.hh.ru/vacancy/134504808"
+
+
+def test_tg_parse_page_apply_url_none_when_only_telegram_links() -> None:
+    html = (
+        '<div class="tgme_widget_message">'
+        '<a class="tgme_widget_message_date" href="https://t.me/easy_frontend_jobs/2268">'
+        "<time></time></a>"
+        '<div class="tgme_widget_message_text">'
+        "Frontend role, no email here, just our channel link. "
+        'See <a href="https://t.me/easy_frontend_jobs">@easy_frontend_jobs</a>'
+        "</div></div>"
+    )
+    jobs = _tg_parse_page(html)
+    assert len(jobs) == 1
+    assert jobs[0]["apply_url"] is None
+
+
+def test_tg_parse_page_skips_apply_url_when_email_present() -> None:
+    html = (
+        '<div class="tgme_widget_message">'
+        '<a class="tgme_widget_message_date" href="https://t.me/easy_frontend_jobs/2269">'
+        "<time></time></a>"
+        '<div class="tgme_widget_message_text">'
+        "Frontend role. Send your CV to hr@acme.am. "
+        'Also see <a href="https://hh.ru/vacancy/999">listing</a>'
+        "</div></div>"
+    )
+    jobs = _tg_parse_page(html)
+    assert len(jobs) == 1
+    assert jobs[0]["recruiter_email"] == "hr@acme.am"
+    assert jobs[0]["apply_url"] is None
 
 
 def test_staffam_hr_mail_regex() -> None:
