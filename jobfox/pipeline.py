@@ -12,7 +12,7 @@ from typing import Iterator
 
 from jobfox import apply as apply_mod
 from jobfox import db, discovery, match
-from jobfox.bot import notify_match  # forward decl: bot.py exports this
+from jobfox.bot import notify_match, send_deep_link_card  # forward decl: bot.py exports these
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class UserPipelineResult:
     scored: int = 0
     notified: int = 0
     auto_applied: int = 0
+    auto_failed: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -186,9 +187,27 @@ def run_for_user(user: db.User) -> UserPipelineResult:
         )
         if should_auto:
             try:
-                apply_mod.apply_to_job(user, job)
-                result.auto_applied += 1
-                db.log_run(user["id"], "auto_apply", "ok", f"job={job['id']}")
+                apply_result = apply_mod.apply_to_job(user, job)
+                if apply_result.outcome in ("sent", "gmail_draft"):
+                    result.auto_applied += 1
+                    db.log_run(user["id"], "auto_apply", "ok", f"job={job['id']}")
+                else:
+                    # Transport degraded to deep_link (e.g. Gmail draft
+                    # creation failed) — nothing was actually sent. Don't
+                    # count it as a success, don't leave the job stuck on
+                    # status='applied' with no recourse, and hand the user
+                    # the same deep-link card a manual Apply tap would have
+                    # produced so they can still act on it.
+                    db.update_job(job["id"], status="notified", apply_error=None)
+                    result.auto_failed += 1
+                    db.log_run(
+                        user["id"], "auto_apply", "deep_link",
+                        f"job={job['id']} needs_gmail_reauth={apply_result.needs_gmail_reauth}",
+                    )
+                    try:
+                        send_deep_link_card(user, job, apply_result, chat_id=user["tg_chat_id"])
+                    except Exception as e:
+                        result.errors.append(f"deep_link card job={job['id']}: {e}")
             except apply_mod.QuotaExceeded as q:
                 # Not an error: quota is a product boundary. Fall back to a
                 # plain notification so the match isn't lost.
@@ -214,8 +233,9 @@ def run_for_user(user: db.User) -> UserPipelineResult:
                 db.log_run(user["id"], "notify", "error", f"job={job['id']} {e}"[:1000])
 
     log.info(
-        "user %d: scored=%d notified=%d auto=%d errors=%d",
-        user["id"], result.scored, result.notified, result.auto_applied, len(result.errors),
+        "user %d: scored=%d notified=%d auto=%d auto_failed=%d errors=%d",
+        user["id"], result.scored, result.notified, result.auto_applied,
+        result.auto_failed, len(result.errors),
     )
     return result
 

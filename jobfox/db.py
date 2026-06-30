@@ -664,10 +664,16 @@ def list_users_with_gmail() -> list[User]:
 
 # Applies per rolling 7-day window. Rolling (vs. calendar week) needs no
 # reset cron and can't be gamed by applying 2× around the boundary.
-TIER_APPLY_LIMITS: dict[str, int] = {"free": 100, "pro": 50, "power": 200}
+# `None` means no cap — reserved for internal/admin accounts (tier="unlimited").
+TIER_APPLY_LIMITS: dict[str, int | None] = {
+    "free": 5,
+    "pro": 50,
+    "power": 200,
+    "unlimited": None,
+}
 
 
-def apply_quota(tier: str) -> int:
+def apply_quota(tier: str) -> int | None:
     return TIER_APPLY_LIMITS.get(tier, TIER_APPLY_LIMITS["free"])
 
 

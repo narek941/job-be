@@ -506,7 +506,9 @@ def _cmd_me(user: db.User, _rest: str) -> None:
         f"Gmail draft: {gmail_status}",
         f"SMTP: {smtp_status}",
         f"Plan: {fresh['tier']}  "
-        f"({db.applies_this_week(fresh['id'])}/{db.apply_quota(fresh['tier'])} applies this week)",
+        f"({db.applies_this_week(fresh['id'])}/"
+        f"{db.apply_quota(fresh['tier']) if db.apply_quota(fresh['tier']) is not None else '∞'} "
+        f"applies this week)",
         f"Desired role: {fresh['desired_role'] or '— set with /role'}",
         "Salary: "
         + (
@@ -669,6 +671,8 @@ def _cmd_run(user: db.User, _rest: str) -> None:
         f"Discovery: {sum(x.get('new', 0) for x in r.discovery.values())} new · "
         f"Scored: {r.scored} · Notified: {r.notified} · Auto-applied: {r.auto_applied}"
     )
+    if r.auto_failed:
+        summary += f" · ⚠️ Auto-apply needs action: {r.auto_failed}"
     if r.errors:
         summary += f"\n⚠️ {len(r.errors)} error(s): {r.errors[0][:200]}"
     telegram_api.send_message(user["tg_chat_id"], summary)
@@ -881,6 +885,27 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     # application from any email client (mobile included, where the Gmail
     # compose URL is awkward). A Gmail compose URL is still offered for the
     # desktop fast-path.
+    send_deep_link_card(
+        user, job, result,
+        chat_id=cb.chat_id, edit_message_id=cb.message_id, callback_id=cb.callback_id,
+    )
+
+
+def send_deep_link_card(
+    user: db.User,
+    job: db.Job,
+    result: apply_mod.ApplyResult,
+    *,
+    chat_id: int,
+    edit_message_id: int | None = None,
+    callback_id: str | None = None,
+) -> None:
+    """Render the deep-link fallback: note + compose-URL card, the
+    copy-paste draft, and the CV attachment.
+
+    Shared by a manual Apply tap (edits the existing match card via
+    `edit_message_id`/`callback_id`) and an auto-apply transport failure
+    (sends a fresh message — there's no callback context to edit)."""
     compose_url = gmail_api.gmail_link_url(
         kind="compose",
         to=result.to_email,
@@ -900,26 +925,32 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
             "🔌 *Gmail disconnected* — your token expired or scopes changed. "
             "Run /connect\\_gmail to restore one-tap drafts.\n\n" + note
         )
-    telegram_api.answer_callback(
-        cb.callback_id,
-        "Reconnect Gmail" if result.needs_gmail_reauth
-        else "Add recipient" if missing_recipient
-        else "Draft ready",
-    )
-    telegram_api.edit_message_text(
-        cb.chat_id, cb.message_id,
-        _match_message(job) + "\n\n" + note,
-        reply_markup={"inline_keyboard": [
-            [{"text": "📧 Compose in Gmail", "url": compose_url}],
-            _outcome_row(job["id"]),
-            [{"text": "🔗 Open listing", "url": job["url"]}],
-        ]},
-        parse_mode="Markdown",
-    )
+    if callback_id:
+        telegram_api.answer_callback(
+            callback_id,
+            "Reconnect Gmail" if result.needs_gmail_reauth
+            else "Add recipient" if missing_recipient
+            else "Draft ready",
+        )
+    card_text = _match_message(job) + "\n\n" + note
+    reply_markup = {"inline_keyboard": [
+        [{"text": "📧 Compose in Gmail", "url": compose_url}],
+        _outcome_row(job["id"]),
+        [{"text": "🔗 Open listing", "url": job["url"]}],
+    ]}
+    if edit_message_id is not None:
+        telegram_api.edit_message_text(
+            chat_id, edit_message_id, card_text,
+            reply_markup=reply_markup, parse_mode="Markdown",
+        )
+    else:
+        telegram_api.send_message(
+            chat_id, card_text, reply_markup=reply_markup, parse_mode="Markdown",
+        )
     # 1. Ready-to-paste draft (To / Subject / Body) in a single code block.
     try:
         telegram_api.send_message(
-            cb.chat_id,
+            chat_id,
             _draft_template_text(result),
             parse_mode="Markdown",
         )
@@ -929,7 +960,7 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
     if user["cv_pdf"]:
         try:
             telegram_api.send_document(
-                cb.chat_id,
+                chat_id,
                 filename=user["cv_pdf_filename"] or "cv.pdf",
                 content=bytes(user["cv_pdf"]),
                 caption="📎 Attach this to the draft above.",
@@ -938,7 +969,7 @@ def _cb_apply(user: db.User, job: db.Job, cb: IncomingCallback) -> None:
             log.exception("send_document failed for user=%d job=%d", user["id"], job["id"])
     else:
         telegram_api.send_message(
-            cb.chat_id,
+            chat_id,
             "⚠️ No CV stored — send a PDF first (then re-tap Apply).",
         )
 

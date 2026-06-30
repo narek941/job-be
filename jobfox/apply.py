@@ -188,7 +188,7 @@ def apply_to_job(user: db.User, job: db.Job) -> ApplyResult:
     tier = user.get("tier") or "free"
     used = db.applies_this_week(user["id"])
     limit = db.apply_quota(tier)
-    if used >= limit:
+    if limit is not None and used >= limit:
         raise QuotaExceeded(tier=tier, used=used, limit=limit)
 
     subject = _subject(job)

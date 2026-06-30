@@ -45,6 +45,10 @@ def test_tier_quotas() -> None:
     assert db.apply_quota("unknown-tier") == 5  # safe default
 
 
+def test_apply_quota_unlimited_tier_has_no_cap() -> None:
+    assert db.apply_quota("unlimited") is None
+
+
 def test_quota_exceeded_message() -> None:
     q = QuotaExceeded(tier="free", used=5, limit=5)
     assert "5/5" in str(q) and "free" in str(q)
