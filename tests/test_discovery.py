@@ -4,6 +4,7 @@ from jobfox.discovery import (
     DEFAULT_TELEGRAM_CHANNELS,
     _STAFFAM_HR_MAIL_RE,
     _looks_non_tech,
+    _patch_jobspy_country_tolerance,
     _tg_parse_page,
     apply_url_from_links,
     clean_url,
@@ -161,6 +162,18 @@ def test_tg_parse_page_skips_apply_url_when_email_present() -> None:
     assert len(jobs) == 1
     assert jobs[0]["recruiter_email"] == "hr@acme.am"
     assert jobs[0]["apply_url"] is None
+
+
+def test_jobspy_country_patch_tolerates_unknown_countries() -> None:
+    from jobspy.model import Country  # type: ignore[import-not-found]
+
+    _patch_jobspy_country_tolerance()
+    # Armenia (and most of the post-Soviet region) has no entry in jobspy's
+    # Country enum — unpatched, this raises ValueError and kills the whole
+    # LinkedIn page fetch for any search that surfaces an Armenia-based job.
+    assert Country.from_string("armenia") == Country.WORLDWIDE
+    # A genuinely supported country must still resolve correctly.
+    assert Country.from_string("usa") == Country.USA
 
 
 def test_staffam_hr_mail_regex() -> None:

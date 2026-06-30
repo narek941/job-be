@@ -554,6 +554,41 @@ def _coalesce_str(v) -> str | None:
     return s
 
 
+_jobspy_patched = False
+
+
+def _patch_jobspy_country_tolerance() -> None:
+    """jobspy's `Country` enum has no entry for many countries (Armenia
+    included). When a LinkedIn job card's displayed location is 3-part
+    ("Yerevan, Yerevan, Armenia"), the scraper calls
+    `Country.from_string("armenia")`, which raises — and that exception
+    isn't caught per-job, it kills the *entire page fetch*
+    (jobspy/linkedin/__init__.py re-raises as LinkedInException). In
+    practice this means any LinkedIn search that surfaces even one
+    Armenia-based listing returns zero results for that whole query.
+
+    Patch `Country.from_string` to fall back to WORLDWIDE on an unknown
+    country instead of raising — the same fallback jobspy's own code
+    already uses for 2-part (city, country) locations."""
+    global _jobspy_patched
+    if _jobspy_patched:
+        return
+    from jobspy.model import Country  # type: ignore[import-not-found]
+
+    _original = Country.from_string.__func__
+
+    @classmethod
+    def _lenient_from_string(cls, country_str: str):
+        try:
+            return _original(cls, country_str)
+        except ValueError:
+            log.debug("jobspy: unknown country %r in a listing, defaulting to worldwide", country_str)
+            return cls.WORLDWIDE
+
+    Country.from_string = _lenient_from_string
+    _jobspy_patched = True
+
+
 def discover_linkedin(
     queries: Iterable[str],
     locations: Iterable[str],
@@ -569,6 +604,7 @@ def discover_linkedin(
     except ImportError:
         log.warning("python-jobspy not installed; skipping LinkedIn discovery")
         return []
+    _patch_jobspy_country_tolerance()
 
     queries = list(queries)
     locations = list(locations) or ["Remote"]

@@ -812,7 +812,13 @@ def funnel_stats(user_id: int, *, days: int = 30) -> dict[str, int]:
               AND created_at >= NOW() - make_interval(days => %(days)s)) AS offers,
           (SELECT COUNT(DISTINCT job_id) FROM application_events
             WHERE user_id = %(uid)s AND event_type = 'rejected'
-              AND created_at >= NOW() - make_interval(days => %(days)s)) AS rejections
+              AND created_at >= NOW() - make_interval(days => %(days)s)) AS rejections,
+          (SELECT COUNT(*) FROM pipeline_runs
+            WHERE user_id = %(uid)s AND stage = 'auto_apply' AND status = 'ok'
+              AND created_at >= NOW() - make_interval(days => %(days)s)) AS auto_applied,
+          (SELECT COUNT(*) FROM pipeline_runs
+            WHERE user_id = %(uid)s AND stage = 'auto_apply' AND status = 'deep_link'
+              AND created_at >= NOW() - make_interval(days => %(days)s)) AS auto_apply_needs_action
         """,
         {"uid": user_id, "days": days},  # type: ignore[arg-type]
         fetch="one",

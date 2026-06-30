@@ -222,12 +222,12 @@ def gmail_drafts_redirect(account: str = "", draft: str = "") -> HTMLResponse:
     web = gmail_api.drafts_url(acct, draft_id=draft_id)
     ios = gmail_api.app_gmail_url()
     android = gmail_api.app_gmail_intent(fallback_web=web)
-    # A draft id only resolves via the web URL; the native app has no
-    # supported deep link to a specific draft.
+    # The native app has no supported deep link to a specific draft — it
+    # always opens the inbox. We still try it first; the web URL (which
+    # does resolve to the exact draft) is only the fallback if the app
+    # isn't installed or the redirect doesn't fire.
     return HTMLResponse(
-        gmail_api.gmail_redirect_html(
-            web, ios_url=ios, android_url=android, prefer_web=bool(draft_id),
-        )
+        gmail_api.gmail_redirect_html(web, ios_url=ios, android_url=android)
     )
 
 

@@ -92,6 +92,15 @@ def _md_escape(text: str) -> str:
     )
 
 
+_SOURCE_LABELS: dict[str, str] = {
+    "staff_am": "staff.am",
+    "job_am": "job.am",
+    "myjob_am": "myjob.am",
+    "linkedin": "LinkedIn",
+    "telegram": "Telegram",
+}
+
+
 def _match_message(job: db.Job) -> str:
     title = _md_escape(job["title"] or "(untitled)")
     company = _md_escape(job["company"] or "—")
@@ -99,10 +108,16 @@ def _match_message(job: db.Job) -> str:
     score = job["score"] or 0
     reason = _md_escape((job["reason"] or "").strip())
     cover = (job["cover_letter"] or "").strip()
-    # Telegram's hard limit is 4096; the rest of the card uses ~400 chars,
-    # so 3500 leaves a safety margin and fits virtually every cover letter
-    # the LLM produces (cover_letter() asks for 180-260 words ≈ 1500 chars).
-    cover_preview = cover if len(cover) <= 3500 else cover[:3500] + "…"
+    desc = (job["description"] or "").strip()
+    # Telegram's hard limit is 4096. Split the remaining budget (after
+    # ~400 chars of meta lines/labels) between the listing description and
+    # the cover letter so a long original posting can't push the cover
+    # letter (the part that actually matters for Apply) off the card.
+    desc_preview = desc if len(desc) <= 1200 else desc[:1200] + "…"
+    cover_preview = cover if len(cover) <= 2200 else cover[:2200] + "…"
+    desc_block = f"\n*Job description:*\n{_md_escape(desc_preview)}\n" if desc_preview else ""
+    source = _SOURCE_LABELS.get(job["source"], job["source"])
+    salary_line = f"\n💰 {_md_escape(job['salary'])}" if job.get("salary") else ""
     email_line = (
         f"\n📧 Recruiter: `{_md_escape(job['recruiter_email'])}`"
         if job["recruiter_email"]
@@ -112,10 +127,12 @@ def _match_message(job: db.Job) -> str:
     )
     return (
         f"*{title}*\n"
-        f"🏢 {company}  ·  📍 {location}\n"
+        f"🏢 {company}  ·  📍 {location}  ·  📡 {source}\n"
         f"⭐ Fit: *{score}/10*\n"
         f"_{reason}_\n"
-        f"{email_line}\n\n"
+        f"{salary_line}"
+        f"{email_line}\n"
+        f"{desc_block}\n"
         f"*Cover letter:*\n{_md_escape(cover_preview)}"
     )
 
@@ -619,6 +636,16 @@ def _cmd_stats(user: db.User, rest: str) -> None:
         f"Interview rate: {pct(s['interviews'], s['applied'])}",
         f"Offer rate: {pct(s['offers'], s['applied'])}",
     ]
+    if s["auto_applied"] or s["auto_apply_needs_action"]:
+        lines += [
+            "",
+            f"🤖 Auto-applied: {s['auto_applied']}",
+        ]
+        if s["auto_apply_needs_action"]:
+            lines.append(
+                f"⚠️ Needs your attention: {s['auto_apply_needs_action']} "
+                "(Gmail/SMTP failed — sent as a manual card instead)"
+            )
     telegram_api.send_message(user["tg_chat_id"], "\n".join(lines), parse_mode="Markdown")
 
 

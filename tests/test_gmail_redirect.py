@@ -48,7 +48,11 @@ def test_gmail_compose_redirect_includes_app_scheme() -> None:
     assert "mail.google.com" in r.text
 
 
-def test_gmail_drafts_redirect_prefers_web_for_specific_draft() -> None:
+def test_gmail_drafts_redirect_tries_native_app_first_even_for_specific_draft() -> None:
+    # The native app has no deep link to one specific draft, but we still
+    # try it first — landing on the inbox beats a webview every time. The
+    # web URL (which does resolve to the exact draft) is only the fallback
+    # the redirect page falls back to if the app scheme doesn't fire.
     with patch("jobfox.config.settings", return_value=_fake_settings()), \
          patch("jobfox.db.run_migrations"):
         from jobfox.main import app
@@ -60,4 +64,5 @@ def test_gmail_drafts_redirect_prefers_web_for_specific_draft() -> None:
             )
     assert r.status_code == 200
     assert "compose=d999" in r.text
-    assert "preferWeb = true" in r.text
+    assert "preferWeb = false" in r.text
+    assert "googlegmail:///" in r.text
